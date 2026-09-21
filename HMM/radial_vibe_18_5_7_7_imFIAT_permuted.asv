@@ -1,0 +1,219 @@
+function [manifest, manifestFile] = radial_vibe_18_5_7_7_imFIAT_permuted( ...
+    metaManifest, reconstructionDir, referenceVolumeA, forceUpdate, savePermutedData)
+% radial_vibe_18_5_7_7_imFIAT_permuted: Perform backprojection with gridding
+% scanDir: the input directory
+% metaManifest: metadata manifest
+% reconstructionDir: the reconstruction directory
+% referenceVolumeA: reference volume
+% forceUpdate: boolean flag to force update
+
+if nargin<5
+    savePermutedData = false;
+end
+fprintf(' RUNNING: radial_vibe_18_5_7_7_imFIAT_permuted()-\n');
+fprintf(' savePermutedData = %g\n',savePermutedData);
+
+% Initialize timer
+initTic = tic;
+
+dstRootDir = reconstructionDir;
+dstSeriesDirName = sprintf('%s_COMPLEX_PROJ_norm4', metaManifest.prefixString);
+dstDir = fullfile(dstRootDir, dstSeriesDirName);
+manifestFile = fullfile(dstDir, 'deid-manifest.mat');
+reconstructionTimestamp = '2018-04-18 13:58:25 -04:00';
+
+[manifestLoaded, manifest, ~] = loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
+
+if ~manifestLoaded || forceUpdate
+    permissiveMakeDirIfNotExist(dstDir);    
+    nSequences = numel(metaManifest.sequences);
+    manifest = metaManifest;
+   
+    for iSequence = 1:nSequences
+
+        seqTic = tic;
+
+        fprintf('\n\n -- readVD11MultiRaidFileStructure, mapVBVD -- \n\n');
+        s = readVD11MultiRaidFileStructure(metaManifest.sequences(iSequence).rawDataFile, 'CalibrationOnly', true);
+        q = mapVBVD(metaManifest.sequences(iSequence).rawDataFile);
+        if iscell(q)
+            q = q{end};
+        end
+       
+        fprintf('\n\n -- estimateCoilSensitivitieMaps2 -- \n\n');
+        [noiseWhiteningTransform, channelSensitivityMaps, channelIds, ~] = estimateCoilSensitivitieMaps2(s);
+
+        fprintf('\n\n -- prepareRadialVibeDataForGridding2_3 -- \n\n');
+        [sampledData, kSpaceLocations, densityCompensation, iiSpokes, timeStamps, nPartitions, nSpokes, nSamples] = ...
+            prepareRadialVibeDataForGridding2_3(q, s, noiseWhiteningTransform, channelIds);
+
+        % [sampledData, kSpaceLocations, densityCompensation, iiSpokes, timeStamps, nPartitions, nSpokes, nSamples] = ...
+        %     prepareRadialVibeDataForGridding2_3_1(q, s, noiseWhiteningTransform, channelIds);
+
+
+       
+
+
+
+        sensitivityMapArraySize = size(channelSensitivityMaps.A);
+        periodicChannelSensitivityMaps = centeredArrayVolumeResize(channelSensitivityMaps, sensitivityMapArraySize(1,1:3).*[3 1 3]);
+        periodicChannelSensitivityMaps.A = repmat(channelSensitivityMaps.A, [3 1 3 1]);
+       
+        nDimensions = 3;
+        referenceSize = size(referenceVolumeA.A);
+        if referenceSize(3) == 64
+            imageSize = [224 224 floor(referenceSize(3) * 1.5)];
+        else
+            imageSize = [224 224 96];
+        end
+       
+        gridSize = ceil(1.375 * imageSize);
+        kernelSize = 7 * ones(1, nDimensions);
+        nChannels = size(sampledData, 2);
+        dicomImageSize = referenceSize;
+        visibleObjectSize = referenceSize;
+       
+        L1 = [eye(3,3), floor(dicomImageSize'/2); 0 0 0 1];
+        L2 = [diag([1 -1 -1]), [0; dicomImageSize(2) - 1; dicomImageSize(3) - 1]; 0 0 0 1];
+        L3 = [referenceVolumeA.R * diag(referenceVolumeA.v), referenceVolumeA.r0; 0 0 0 1];
+       
+        Cs = L1 \ (L2 \ (L3 \ (eye(4,4) * L3 * L1)));
+        CA = Cs(1:3,1:3);
+        Cb = Cs(1:3,4);
+       
+        spatialSigma = 0; % px
+        r0_machine = [s.m{2}.param.Meas{1}.DICOM.lGlobalTablePosSag, s.m{2}.param.Meas{1}.DICOM.lGlobalTablePosCor, s.m{2}.param.Meas{1}.DICOM.lGlobalTablePosTra];
+       
+        channelSensitivityMaps2 = periodicChannelSensitivityMaps;
+        channelSensitivityMaps2.r0 = channelSensitivityMaps2.r0 + r0_machine';
+       
+        referenceVolumeC = centeredArrayVolumeResize(referenceVolumeA, imageSize);
+        channelSensitivityMaps4 = resampleArrayVolumeToSame(channelSensitivityMaps2, referenceVolumeC, 'linear', 0);
+        paddedChannelSensitivityArray = channelSensitivityMaps4.A;
+       
+        iiPhases = 0:1:nSpokes - 1;
+        timeSeries = struct();
+        timeSeries.iiSpokes = iiPhases;
+        timeSeries.complexFile = fullfile(dstDir, sprintf('Sequence_%06.0f_ComplexData.raw', metaManifest.sequences(iSequence).sequenceId));
+        timeSeries.imageSize = imageSize;
+        timeSeries.dicomImageSize = dicomImageSize;
+        timeSeries.nSpokes = nSpokes;
+        timeSeries.sensitivityMapArraySize = sensitivityMapArraySize;
+        % timeSeries.kSpaceLocations = kSpaceLocations;
+        % timeSeries.dc = densityCompensation;
+
+
+        %% Check density comp values
+
+        % check_dcf( densityCompensation, nPartitions, nSpokes, nSamples );
+
+
+        %% STM DATA PREP
+
+        % nSpokesPerFrame = 15;
+        % zSlice = [];
+        % calibrationSize = [32 32];
+        % 
+        % [kCal, outputs, diagnostics] = reconstructGARFrameForSTM_v1( ...
+        %     sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
+        %     channelSensitivityMaps4, imageSize, gridSize, nSpokesPerFrame, zSlice, ...
+        %     calibrationSize, ...
+        %     'CoordinateTransform', CA, ...
+        %     'TranslationVector', Cb, ...
+        %     'VisibleObjectSize', visibleObjectSize, ...
+        %     'PhaseWidth', 1, ...
+        %     'SpatialSigma', spatialSigma, ...
+        %     'DensityScale', 1, ...
+        %     'UseGpu', true, ...
+        %     'DisplaySlice', true, ...
+        %     'DisplaySliceIndex', 50, ...
+        %     'ReturnDiagnostics', true, ...
+        %     'KernelSize', kernelSize);
+
+
+
+        % Set required inputs
+        nSpokesPerFrame = 15;
+        zSlice = [];
+        calibrationSize = [32 32];
+
+        % Set optional inputs
+        inputOptions = struct();
+
+        inputOptions.imageSize             = imageSize;
+        inputOptions.gridSize              = gridSize;
+        inputOptions.nSpokesPerFrame       = nSpokesPerFrame;
+        inputOptions.zSlice                = zSlice;
+        inputOptions.calibrationSize       = calibrationSize;
+        inputOptions.CoordinateTransform   = CA;
+        inputOptions.TranslationVector     = Cb;
+        inputOptions.VisibleObjectSize     = visibleObjectSize;
+        inputOptions.PhaseWidth            = 1;
+        inputOptions.SpatialSigma          = spatialSigma;
+        inputOptions.DensityScale          = 1;
+        inputOptions.UseGpu                = true;
+        inputOptions.DisplaySlice          = true;
+        inputOptions.DisplaySliceIndex     = 50;
+        inputOptions.ReturnDiagnostics     = true;
+        inputOptions.KernelSize            = kernelSize;
+        
+        % Call data prep function
+        [kCal, outputs, diagnostics] = reconstructGARFrameForSTM_v1( ...
+            sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
+            channelSensitivityMaps4, ...
+            inputOptions.imageSize, ...
+            inputOptions.gridSize, ...
+            inputOptions.nSpokesPerFrame, ...
+            inputOptions.zSlice, ...
+            inputOptions.calibrationSize, ...
+            'CoordinateTransform', inputOptions.CoordinateTransform, ...
+            'TranslationVector',   inputOptions.TranslationVector, ...
+            'VisibleObjectSize',   inputOptions.VisibleObjectSize, ...
+            'PhaseWidth',          inputOptions.PhaseWidth, ...
+            'SpatialSigma',        inputOptions.SpatialSigma, ...
+            'DensityScale',        inputOptions.DensityScale, ...
+            'UseGpu',              inputOptions.UseGpu, ...
+            'DisplaySlice',        inputOptions.DisplaySlice, ...
+            'DisplaySliceIndex',   inputOptions.DisplaySliceIndex, ...
+            'ReturnDiagnostics',   inputOptions.ReturnDiagnostics, ...
+            'KernelSize',          inputOptions.KernelSize);
+
+
+        % Save some of the results (omit 4+D arrays!)
+        someOutputs = [];
+        someOutputs.timers = outputs.timers;
+        someOutputs.useGpu = outputs.useGpu;
+        someOutputs.zSlice = outputs.zSlice;
+
+        someDiagnostics = diagnostics;
+        someDiagnostics = rmfield(someDiagnostics,'frameData');
+
+        %[ Save the results
+        outputMatFile = fullfile(dstDir,'test_STM_GARSOS_data-prep_09-20-2026.mat');
+        save(outputMatFile,'inputOptions','someDiagnostics','someOutputs','kCal');
+
+
+        seqToc = toc(seqTic);
+       
+        manifest.sequences(iSequence).timeSeries = timeSeries;
+        manifest.sequences(iSequence).elapProcessingTime = seqToc;
+        manifest.sequences(iSequence).outputs = someOutputs;  %  = outputs;
+        manifest.sequences(iSequence).diagnostics = someDiagnostics;  %  = diagnostics;
+        manifest.sequences(iSequence).kCal = kCal;
+
+    end
+
+    elapTime = toc(initTic);
+    manifest.totalElapsedTime = elapTime;
+   
+    % Display total elapsed time
+    fprintf('Total elapsed time: %.2f seconds.\n', elapTime);
+   
+    saveWithTimestamp(manifestFile, manifest, iso8601Now());
+    [manifestLoaded, manifest, ~] = loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
+    assert(manifestLoaded);
+
+end
+
+   
+end
