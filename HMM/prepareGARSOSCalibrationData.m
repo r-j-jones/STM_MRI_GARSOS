@@ -8,10 +8,13 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
 %   metaManifest       GAR-SOS sequence manifest.
 %   reconstructionDir  Destination reconstruction directory.
 %   referenceVolumeA   Reference ArrayVolume used for geometry alignment.
-%   forceUpdate        Recompute instead of using a current manifest.
 %   frameParams        Struct with nSpokesPerFrame, zSlice, calibrationSize.
 %
-% Optional input:
+% Optional inputs:
+%   forceUpdate        Defaults to false. May be logical or a numeric
+%                      integer equal to 0 or 1. The value
+%                      'ReruunWithoutSaving' forces recomputation without
+%                      saving the resulting manifest.
 %   griddingParams     Struct controlling image/grid reconstruction. Missing
 %                      fields receive the defaults used by the prior code.
 %
@@ -27,13 +30,56 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
 %                      used, this output is returned as an empty struct.
 %
 % Large stmCalibOutputs data are unavailable after a cached-manifest load.
-% Rerun with forceUpdate=true to regenerate and return them.
+% 
+% Rerun with forceUpdate=true to regenerate and return them. Use
+%  forceUpdate='ReruunWithoutSaving' to regenerate without saving.
+% 
+% Robert Jones  |  09-24-2026
 
-    narginchk(6, 7);
-    if nargin < 7 || isempty(griddingParams)
+
+    if nargin == 0
+        localDisplayUsage();
+        manifest = [];
+        manifestFile = [];
+        calibData = [];
+        stmCalibOutputs = [];
+        return;
+    end
+    
+    narginchk(4, 6);
+
+    % Because forceUpdate precedes frameParams in the function signature,
+    % shift the arguments when forceUpdate is omitted.
+    if nargin <= 5 && isstruct(forceUpdate)
+        if nargin == 5
+            griddingParams = frameParams;
+        else
+            griddingParams = struct();
+        end
+        frameParams = forceUpdate;
+        forceUpdate = false;
+    elseif nargin < 6 || isempty(griddingParams)
         griddingParams = struct();
     end
-    validateattributes(forceUpdate, {'logical', 'numeric'}, {'scalar'});
+
+    rerunWithoutSaving = ...
+        (ischar(forceUpdate) && isrow(forceUpdate) && ...
+            strcmp(forceUpdate, 'ReruunWithoutSaving')) || ...
+        (isstring(forceUpdate) && isscalar(forceUpdate) && ...
+            forceUpdate == "ReruunWithoutSaving");
+
+    if rerunWithoutSaving
+        forceUpdate = true;
+    elseif islogical(forceUpdate) || isnumeric(forceUpdate)
+        validateattributes(forceUpdate, {'logical', 'numeric'}, ...
+            {'scalar', 'real', 'finite', 'integer', '>=', 0, '<=', 1});
+        forceUpdate = logical(forceUpdate);
+    else
+        error('prepareGARSOSCalibrationData:InvalidForceUpdate', ...
+            ['forceUpdate must be logical, a numeric integer equal to 0 or 1, ' ...
+             'or ''ReruunWithoutSaving''.']);
+    end
+
     frameParams = localValidateFrameParams(frameParams);
     validateattributes(metaManifest, {'struct'}, {'scalar'});
     validateattributes(referenceVolumeA, {'struct'}, {'scalar'});
@@ -44,7 +90,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
 
     destinationDir = fullfile( ...
         reconstructionDir, sprintf('GARSOS_STM_Calib'));
-    manifestFile = fullfile(destinationDir, 'deid-manifest.mat');
+    manifestFile = fullfile(destinationDir, 'garsos-stm-calib-manifest.mat');
     reconstructionTimestamp = '2018-04-18 13:58:25 -04:00';
 
     [manifestLoaded, manifest, ~] = ...
@@ -73,6 +119,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
             q = q{end};
         end
 
+        % Preprocessing
         [noiseWhiteningTransform, channelSensitivityMaps, channelIds, ~] = ...
             estimateCoilSensitivitieMaps2(s);
         [sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
@@ -80,6 +127,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
             prepareRadialVibeDataForGridding2_3( ...
             q, s, noiseWhiteningTransform, channelIds);
 
+        % Set dimensions
         referenceSize = size(referenceVolumeA.A);
         imageSize = griddingParams.imageSize;
         gridSize = ceil(griddingParams.gridOversamplingFactor .* imageSize);
@@ -98,6 +146,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         CA = Cs(1:3, 1:3);
         Cb = Cs(1:3, 4);
 
+        % Prepare aligned coil sensitivity maps
         sensitivityMapArraySize = size(channelSensitivityMaps.A);
         periodicMaps = centeredArrayVolumeResize( ...
             channelSensitivityMaps, sensitivityMapArraySize(1:3) .* [3 1 3]);
@@ -129,6 +178,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         sequenceMetadata.CA = CA;
         sequenceMetadata.Cb = Cb;
 
+        % Structs with other params for generating STM calibration data
         currentFrameParams = frameParams;
         currentFrameParams.zSlice = localResolveZSlice( ...
             frameParams.zSlice, imageSize(3));
@@ -145,6 +195,12 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         inputOptions = localBuildInputOptions( ...
             currentFrameParams, currentGriddingParams, imageSize, ...
             gridSize, CA, Cb, visibleObjectSize);
+
+        % Generate STM calibration data
+        fprintf('--  Generating STM calibration data..\n');
+        fprintf(' Spokes per frame = %d,\n Calibration size = %d x %d\n', ...
+            currentFrameParams.nSpokesPerFrame,...
+            currentFrameParams.calibrationSize);
 
         [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
             sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
@@ -178,12 +234,14 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         stmCalibOutputs.kSpace2D = outputs.kSpace2D;
         diagnostics.timers = outputs.timers;
 
+        % Easy access to STM calibration data variables of interest
         calibData = struct( ...
             'kCal', kCal, ...
             'nbSpokesPerFrame', currentFrameParams.nSpokesPerFrame, ...
             'zSlice', currentFrameParams.zSlice, ...
             'calibrationSize', currentFrameParams.calibrationSize);
 
+        % Store results in manifest struct
         manifest.sequences(iSequence) = localMergeStruct( ...
             manifest.sequences(iSequence), sequenceMetadata);
         manifest.sequences(iSequence).diagnostics = diagnostics;
@@ -194,16 +252,28 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         manifest.sequences(iSequence).frameParams = currentFrameParams;
     end
 
-    manifest.totalElapsedTime = toc(totalTimer);
-    saveWithTimestamp(manifestFile, manifest, iso8601Now());
-    [manifestLoaded, manifest, ~] = ...
-        loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
-    assert(manifestLoaded, ...
-        'prepareGARSOSCalibrationData:ManifestSaveFailed', ...
-        'The calibration manifest could not be reloaded after saving.');
+    % Save manifest struct to mat file
+     manifest.totalElapsedTime = toc(totalTimer);
+    if ~rerunWithoutSaving
+        saveWithTimestamp(manifestFile, manifest, iso8601Now());
+        [manifestLoaded, manifest, ~] = ...
+            loadIfExistAndTimestampNewerThan( ...
+                manifestFile, reconstructionTimestamp);
+        assert(manifestLoaded, ...
+            'prepareGARSOSCalibrationData:ManifestSaveFailed', ...
+            'The calibration manifest could not be reloaded after saving.');
+    end
+
 end
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%    LOCAL HELPER FUNCTIONS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 function frameParams = localValidateFrameParams(frameParams)
+%localValidateFrameParams Validate frameParams
+
     if ~isstruct(frameParams) || ~isscalar(frameParams)
         error('prepareGARSOSCalibrationData:InvalidFrameParams', ...
             'frameParams must be a scalar struct.');
@@ -233,6 +303,8 @@ function zSlice = localResolveZSlice(zSlice, nZ)
 end
 
 function params = localNormalizeGriddingParams(params, referenceVolumeA, frameParams)
+%localNormalizeGriddingParams Set default griddingParams
+
     if ~isstruct(params) || ~isscalar(params)
         error('prepareGARSOSCalibrationData:InvalidGriddingParams', ...
             'griddingParams must be a scalar struct.');
@@ -295,6 +367,8 @@ end
 
 function inputOptions = localBuildInputOptions( ...
     frameParams, griddingParams, imageSize, gridSize, CA, Cb, visibleObjectSize)
+%localBuildInputOptions Store variables in structs
+
     inputOptions = struct();
     inputOptions.imageSize = imageSize;
     inputOptions.gridSize = gridSize;
@@ -316,9 +390,52 @@ function inputOptions = localBuildInputOptions( ...
 end
 
 function merged = localMergeStruct(original, additions)
+%localMergeStruct Merge struct content
+
     merged = original;
     names = fieldnames(additions);
     for iName = 1:numel(names)
         merged.(names{iName}) = additions.(names{iName});
     end
+end
+
+function localDisplayUsage()
+%localDisplayUsage Display documentation and supported call forms.
+
+    fprintf('\n%s\n', help(mfilename));
+
+    fprintf('Supported call forms:\n\n');
+
+    fprintf('%% forceUpdate omitted, griddingParams omitted:\n');
+    fprintf([ ...
+        'prepareGARSOSCalibrationData(' ...
+        'meta, dir, ref, frameParams)\n\n']);
+
+    fprintf('%% forceUpdate omitted, griddingParams supplied:\n');
+    fprintf([ ...
+        'prepareGARSOSCalibrationData(' ...
+        'meta, dir, ref, frameParams, griddingParams)\n\n']);
+
+    fprintf('%% Existing argument order, griddingParams omitted:\n');
+    fprintf([ ...
+        'prepareGARSOSCalibrationData(' ...
+        'meta, dir, ref, true, frameParams)\n\n']);
+
+    fprintf('%% Existing full argument order:\n');
+    fprintf([ ...
+        'prepareGARSOSCalibrationData(' ...
+        'meta, dir, ref, 1, frameParams, griddingParams)\n\n']);
+
+    fprintf('%% Recompute without saving:\n');
+    fprintf([ ...
+        'prepareGARSOSCalibrationData( ...\n' ...
+        '    meta, dir, ref, ''ReruunWithoutSaving'', ' ...
+        'frameParams, griddingParams)\n\n']);
+
+    fprintf('forceUpdate values:\n');
+    fprintf('  false or 0              Use a current cached manifest.\n');
+    fprintf('  true or 1               Recompute and save the manifest.\n');
+    fprintf([ ...
+        '  ''ReruunWithoutSaving''  Recompute without saving ' ...
+        'the manifest.\n\n']);
 end
