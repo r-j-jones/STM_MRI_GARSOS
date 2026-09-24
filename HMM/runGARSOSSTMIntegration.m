@@ -1,8 +1,8 @@
 function result = runGARSOSSTMIntegration(prepared, varargin)
 %runGARSOSSTMINTEGRATION End-to-end GAR-SOS radial/STM operator assembly.
 %
-% Existing ST_maps, eigenValues, and kCal may be supplied; otherwise kCal is
-% generated and STM_computation is called when it is on the MATLAB path.
+% Existing ST_maps, eigenValues, and kCal may be supplied; 
+% otherwise kCal is generated and STM_computation is called when it is on the MATLAB path.
 
     p = inputParser;
     addParameter(p, 'ST_maps', [], @(x) isempty(x) || isnumeric(x));

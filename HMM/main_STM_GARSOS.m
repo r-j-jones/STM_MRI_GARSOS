@@ -1,5 +1,5 @@
-function result = main_deid_permuted_STM_GARSOS(inputPath, outputPath, opts)
-%main_deid_permuted_STM_GARSOS Prepare and reconstruct GAR-SOS STM data.
+function result = main_STM_GARSOS(inputPath, outputPath, opts)
+%main_STM_GARSOS Prepare and reconstruct GAR-SOS STM data.
 %
 % This is a new GAR-SOS-specific entry point based on the preparation
 % sequence in main_deid_permuted_STM. Existing production entry points and
@@ -12,9 +12,14 @@ function result = main_deid_permuted_STM_GARSOS(inputPath, outputPath, opts)
 %   forceUpdate, referenceVolumeA, ST_maps, eigenValues, kCal,
 %   zSlice, calibrationSize, L, STMOptions, RadialOptions
 
-    % % Add path to Fessler toolbox for NUFFT operations
-    % addpath('/path/to/multi-scale-low-rank-MR-recon-master/nufft_toolbox');
 
+    %% Add Fessler NUFFT toolbox to path
+    run /RadOnc-MRI1/Student_Folder/rjones/toolboxes/fessler/irt/setup.m
+    % addpath('/path/to/multi-scale-low-rank-MR-recon-master/nufft_toolbox');
+    fprintf('\nNUFFT is:\n %s \n\n',which('nufft'));
+
+
+    %% arg check
     narginchk(3, 3);
     if ~isstruct(opts) || ~isfield(opts, 'nbSpokesPerFrame')
         error('main_deid_permuted_STM_GARSOS:MissingFrameSize', ...
@@ -34,6 +39,7 @@ function result = main_deid_permuted_STM_GARSOS(inputPath, outputPath, opts)
     if ~isfield(opts, 'STMOptions'), opts.STMOptions = {}; end
     if ~isfield(opts, 'RadialOptions'), opts.RadialOptions = {}; end
 
+    %% Set dirs
     reconstructionDir = fullfile(inputPath, 'reconstruction');
     inputFile = fullfile(reconstructionDir, 'input.mat');
     if exist(inputFile, 'file') ~= 2
@@ -46,15 +52,19 @@ function result = main_deid_permuted_STM_GARSOS(inputPath, outputPath, opts)
             'input.mat must contain kSpaceID1 and kSpaceID2.');
     end
 
+    %% Load reference (vendor-reconed) dicom volume
     if ~isfield(opts, 'referenceVolumeA') || isempty(opts.referenceVolumeA)
         [referenceVolumeA, ~, ~] = loadReferenceDicomImage(inputPath, true);
     else
         referenceVolumeA = opts.referenceVolumeA;
     end
+
+    %% Get scan metadata & header info
     [kSpaceID, ~] = parseKspaceIds(loaded.kSpaceID1, loaded.kSpaceID2);
     [metaManifest, ~] = radial_vibe_18_5_4_timestamp_imFIAT( ...
         kSpaceID, inputPath, outputPath, opts.forceUpdate);
 
+    %% Prepare GARSOS data for STM
     prepared = prepareGARSOSSTMData( ...
         metaManifest, outputPath, referenceVolumeA, opts.forceUpdate);
 
@@ -70,6 +80,8 @@ function result = main_deid_permuted_STM_GARSOS(inputPath, outputPath, opts)
             integrationArgs(end + 1:end + 2) = {name{1}, opts.(name{1})}; %#ok<AGROW>
         end
     end
+
+    %% Run STM computation and generate GARSOS-specific operators
     result = runGARSOSSTMIntegration(prepared, integrationArgs{:});
     result.prepared = prepared;
     result.inputPath = inputPath;
