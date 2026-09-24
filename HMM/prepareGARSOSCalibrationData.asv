@@ -34,7 +34,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
 % Rerun with forceUpdate=true to regenerate and return them. Use
 %  forceUpdate='ReruunWithoutSaving' to regenerate without saving.
 % 
-% Robert Jones  |  09-
+% Robert Jones  |  09-24-2026
 
 
     if nargin == 0
@@ -87,6 +87,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
     griddingParams = localNormalizeGriddingParams( ...
         griddingParams, referenceVolumeA, frameParams);
     stmCalibOutputs = struct();
+    calibData = struct();
 
     destinationDir = fullfile( ...
         reconstructionDir, sprintf('GARSOS_STM_Calib'));

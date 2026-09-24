@@ -87,6 +87,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
     griddingParams = localNormalizeGriddingParams( ...
         griddingParams, referenceVolumeA, frameParams);
     stmCalibOutputs = struct();
+    calibData = struct();
 
     destinationDir = fullfile( ...
         reconstructionDir, sprintf('GARSOS_STM_Calib'));
@@ -97,6 +98,18 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
     if manifestLoaded && ~forceUpdate
         fprintf('Using cached GAR-SOS calibration manifest: %s\n', manifestFile);
+        % Structs with other params for generating STM calibration data
+        currentFrameParams = frameParams;
+        currentFrameParams.zSlice = localResolveZSlice( ...
+            frameParams.zSlice, imageSize(3));
+        currentFrameParams.calibrationSize = frameParams.calibrationSize;
+        % Easy access to STM calibration data variables of interest
+        calibData = struct( ...
+            'kCal', manifest.sequences(iSequence).kCal, ...
+            'nbSpokesPerFrame', currentFrameParams.nSpokesPerFrame, ...
+            'zSlice', currentFrameParams.zSlice, ...
+            'calibrationSize', currentFrameParams.calibrationSize);
+
         return;
     end
 
@@ -250,6 +263,7 @@ function [manifest, manifestFile, calibData, stmCalibOutputs] = ...
         manifest.sequences(iSequence).inputOptions = inputOptions;
         manifest.sequences(iSequence).griddingParams = currentGriddingParams;
         manifest.sequences(iSequence).frameParams = currentFrameParams;
+        manifest.sequences(iSequence).kCal = kCal;
     end
 
     % Save manifest struct to mat file
