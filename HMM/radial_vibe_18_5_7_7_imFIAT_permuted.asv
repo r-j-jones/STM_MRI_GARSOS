@@ -1,5 +1,5 @@
 function [manifest, manifestFile] = radial_vibe_18_5_7_7_imFIAT_permuted( ...
-    metaManifest, reconstructionDir, referenceVolumeA, forceUpdate, savePermutedData)
+    metaManifest, reconstructionDir, referenceVolumeA, forceUpdate)
 % radial_vibe_18_5_7_7_imFIAT_permuted: Perform backprojection with gridding
 % scanDir: the input directory
 % metaManifest: metadata manifest
@@ -133,7 +133,7 @@ if ~manifestLoaded || forceUpdate
 
 
         % Set required inputs
-        nSpokesPerFrame = 15;
+        nSpokesPerFrame = 6;
         zSlice = [];
         calibrationSize = [32 32];
 
@@ -158,7 +158,7 @@ if ~manifestLoaded || forceUpdate
         inputOptions.KernelSize            = kernelSize;
         
         % Call data prep function
-        [kCal, outputs, diagnostics] = reconstructGARFrameForSTM_v1( ...
+        [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
             sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
             channelSensitivityMaps4, ...
             inputOptions.imageSize, ...

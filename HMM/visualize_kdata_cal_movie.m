@@ -1,7 +1,9 @@
-function visualize_kdata_cal_movie( kCal, zIndex )
+function visualize_kdata_cal_movie( kCal, zIndex, delayTime )
 
 imageSize2D = [224 224];
-
+if nargin<3
+    delayTime = 0.1;
+end
 if nargin < 2
     zIndex = 50;      % selected z slice
 end
@@ -26,10 +28,11 @@ for frameIndex = 1:size(kCal, 4)
         prod(imageSize2D) / prod(size(kSmall));
 
     imagesc(abs(imageInterpolated));
+    clim([0 80]);
     axis image off;
     colormap gray;
     colorbar;
     title(sprintf('Slice %d, frame %d', zIndex, frameIndex));
     drawnow;
-    pause(0.4);
+    pause(delayTime);
 end

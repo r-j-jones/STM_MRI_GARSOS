@@ -168,6 +168,7 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
         gpuSensitivityArray = sensitivityArray;
     end
     timers = struct();
+    timers.totalReconTime = -1;
     timers.frameProcessing = zeros(1, nFrames);
     timers.buildReconstructor = zeros(1, nFrames);
     timers.gridData = zeros(1, nFrames);
@@ -276,8 +277,6 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
         end
     end
 
-    timers.kCalRecon = [];
-    ticKcal = tic;
     if isscalar(zSlice)
         kCal = localCentralRegion(kSpace2D, calibrationSize);
     else
@@ -291,7 +290,6 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
         error('reconstructGARFrameForSTM:NonFiniteOutput', ...
             'The extracted kCal contains NaN or Inf values.');
     end
-    timers.kCalRecon = toc(ticKcal);
 
     outputs = struct();
     outputs.reconstructedVolumes = reconstructedVolumes;

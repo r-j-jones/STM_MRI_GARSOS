@@ -1,5 +1,5 @@
 function [manifest, manifestFile] = radial_vibe_18_5_7_7_imFIAT_permuted( ...
-    metaManifest, reconstructionDir, referenceVolumeA, forceUpdate, savePermutedData)
+    metaManifest, reconstructionDir, referenceVolumeA, forceUpdate)
 % radial_vibe_18_5_7_7_imFIAT_permuted: Perform backprojection with gridding
 % scanDir: the input directory
 % metaManifest: metadata manifest
@@ -200,6 +200,7 @@ if ~manifestLoaded || forceUpdate
         manifest.sequences(iSequence).outputs = someOutputs;  %  = outputs;
         manifest.sequences(iSequence).diagnostics = someDiagnostics;  %  = diagnostics;
         manifest.sequences(iSequence).kCal = kCal;
+        manifest.sequences(iSequence).inputOptions = inputOptions;
 
     end
 
