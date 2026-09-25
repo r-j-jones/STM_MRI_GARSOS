@@ -110,110 +110,176 @@ if ~manifestLoaded || forceUpdate
 
         %% STM DATA PREP
 
-        % nSpokesPerFrame = 15;
-        % zSlice = [];
-        % calibrationSize = [32 32];
-        % 
-        % [kCal, outputs, diagnostics] = reconstructGARFrameForSTM_v1( ...
-        %     sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
-        %     channelSensitivityMaps4, imageSize, gridSize, nSpokesPerFrame, zSlice, ...
-        %     calibrationSize, ...
-        %     'CoordinateTransform', CA, ...
-        %     'TranslationVector', Cb, ...
-        %     'VisibleObjectSize', visibleObjectSize, ...
-        %     'PhaseWidth', 1, ...
-        %     'SpatialSigma', spatialSigma, ...
-        %     'DensityScale', 1, ...
-        %     'UseGpu', true, ...
-        %     'DisplaySlice', true, ...
-        %     'DisplaySliceIndex', 50, ...
-        %     'ReturnDiagnostics', true, ...
-        %     'KernelSize', kernelSize);
+        % Inputs:
+        %   sampledData          [Ns x Nc] complex corrected radial samples.
+        %   sampleCoordinates    [Ns x 3] normalized [kx ky kz] coordinates.
+        %   densityCompensation  [Ns x 1] radial density-compensation weights.
+        %   spokeIndex           [Ns x 1] zero- or one-based spoke identifier.
+        %   sensitivityMaps      [Nx x Ny x Nz x Nc] complex maps, or an object with
+        %                        an A property containing that array.
+        %   imageSize            [1 x 3] reconstructed volume dimensions.
+        %   gridSize             [1 x 3] oversampled Cartesian grid dimensions.
+        %   nSpokesPerFrame      positive integer number of consecutive spokes/frame.
+        %   zSlice               one-based image-space z index.
+        %   calibrationSize      [NxCal NyCal] central rectangular k-space size.
+        %
+        % Name/value options:
+        %   'KernelSize'         [1 x 3], default [7 7 7].
+        %   'OutputIsGpuArray'   logical, default false.
+        %   'CoordinateTransform' [3 x 3] HMM trajectory transform.
+        %   'TranslationVector'  [3 x 1] HMM translation vector.
+        %   'VisibleObjectSize'  [1 x 3] HMM visible object size.
+        %   'PhaseWidth'         scalar HMM phase-width normalization.
+        %   'SpatialSigma'       scalar HMM Gaussian weighting parameter.
+        %   'DensityScale'       additional scalar after HMM density scaling.
+        %   'ReturnDiagnostics'  logical, default false.
 
 
-
-        % Set required inputs
-        nSpokesPerFrame = 15;
-        zSlice = [];
+        nSpokesPerFrame = 6;
+        zSlice = 1:imageSize(3);
         calibrationSize = [32 32];
 
-        % Set optional inputs
-        inputOptions = struct();
 
-        inputOptions.imageSize             = imageSize;
-        inputOptions.gridSize              = gridSize;
-        inputOptions.nSpokesPerFrame       = nSpokesPerFrame;
-        inputOptions.zSlice                = zSlice;
-        inputOptions.calibrationSize       = calibrationSize;
-        inputOptions.CoordinateTransform   = CA;
-        inputOptions.TranslationVector     = Cb;
-        inputOptions.VisibleObjectSize     = visibleObjectSize;
-        inputOptions.PhaseWidth            = 1;
-        inputOptions.SpatialSigma          = spatialSigma;
-        inputOptions.DensityScale          = 1;
-        inputOptions.UseGpu                = true;
-        inputOptions.DisplaySlice          = true;
-        inputOptions.DisplaySliceIndex     = 50;
-        inputOptions.ReturnDiagnostics     = true;
-        inputOptions.KernelSize            = kernelSize;
-        
-        % Call data prep function
         [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
             sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
-            channelSensitivityMaps4, ...
-            inputOptions.imageSize, ...
-            inputOptions.gridSize, ...
-            inputOptions.nSpokesPerFrame, ...
-            inputOptions.zSlice, ...
-            inputOptions.calibrationSize, ...
-            'CoordinateTransform', inputOptions.CoordinateTransform, ...
-            'TranslationVector',   inputOptions.TranslationVector, ...
-            'VisibleObjectSize',   inputOptions.VisibleObjectSize, ...
-            'PhaseWidth',          inputOptions.PhaseWidth, ...
-            'SpatialSigma',        inputOptions.SpatialSigma, ...
-            'DensityScale',        inputOptions.DensityScale, ...
-            'UseGpu',              inputOptions.UseGpu, ...
-            'DisplaySlice',        inputOptions.DisplaySlice, ...
-            'DisplaySliceIndex',   inputOptions.DisplaySliceIndex, ...
-            'ReturnDiagnostics',   inputOptions.ReturnDiagnostics, ...
-            'KernelSize',          inputOptions.KernelSize);
+            channelSensitivityMaps4, imageSize, gridSize, nSpokesPerFrame, zSlice, ...
+            calibrationSize, ...
+            'CoordinateTransform', CA, ...
+            'TranslationVector', Cb, ...
+            'VisibleObjectSize', visibleObjectSize, ...
+            'PhaseWidth', 1, ...
+            'SpatialSigma', spatialSigma, ...
+            'DensityScale', 1, ...
+            'UseGpu', true, ...
+            'DisplaySlice', false, ...
+            'ReturnDiagnostics', true, ...
+            'KernelSize', kernelSize);
 
 
-        % Save some of the results (omit 4+D arrays!)
-        someOutputs = [];
-        someOutputs.timers = outputs.timers;
-        someOutputs.useGpu = outputs.useGpu;
-        someOutputs.zSlice = outputs.zSlice;
 
-        someDiagnostics = diagnostics;
-        someDiagnostics = rmfield(someDiagnostics,'frameData');
-
-        %[ Save the results
-        outputMatFile = fullfile(dstDir,'test_STM_GARSOS_data-prep_09-20-2026.mat');
-        save(outputMatFile,'inputOptions','someDiagnostics','someOutputs','kCal');
-
-
-        seqToc = toc(seqTic);
+        %% ORIGINAL HMM CODE BELOW:
+        if 0 == 1
        
-        manifest.sequences(iSequence).timeSeries = timeSeries;
-        manifest.sequences(iSequence).elapProcessingTime = seqToc;
-        manifest.sequences(iSequence).outputs = someOutputs;  %  = outputs;
-        manifest.sequences(iSequence).diagnostics = someDiagnostics;  %  = diagnostics;
-        manifest.sequences(iSequence).kCal = kCal;
+            nNominalSpokesInBlock = 24;        
+            nBlocks = round(numel(iiPhases) / nNominalSpokesInBlock);
+            jjSpokesInBlocks = partitionAllTasks(1:numel(iiPhases), nBlocks);
+   
+            griddingParams = struct();
+            griddingParams.nDimensions = nDimensions;
+            griddingParams.referenceSize = referenceSize;
+            griddingParams.imageSize = imageSize;
+            griddingParams.gridSize = gridSize;
+            griddingParams.kernelSize = kernelSize;
+            griddingParams.nChannels = nChannels;
+            griddingParams.dicomImageSize = dicomImageSize;
+            griddingParams.visibleObjectSize = visibleObjectSize;
+            griddingParams.spatialSigma = spatialSigma;
+            griddingParams.r0_machine = r0_machine;
+            griddingParams.nNominalSpokesInBlock = nNominalSpokesInBlock;
+           
+            switch_gpu(1, 2);
+           
+            fprintf('\n\n -- Storing data in cell arrays -- \n\n');
+            sampledDatas = cell(nBlocks, 1);
+            kSpaceLocationss = cell(nBlocks, 1);
+            densityCompensations = cell(nBlocks, 1);
+           
+            for iBlock = 1:nBlocks
+                jjSpokesInBlock = jjSpokesInBlocks{iBlock};
+                iiSpokesInBlock = iiPhases(jjSpokesInBlock);
+                [mKeep, ~] = ismember(iiSpokes, iiSpokesInBlock);
+                sampledDatas{iBlock} = sampledData(mKeep, :);
+                kSpaceLocationss{iBlock} = kSpaceLocations(mKeep, :);
+                densityCompensations{iBlock} = densityCompensation(mKeep, :);
+            end
+           
+            outputFilePath = timeSeries.complexFile;
+            clear sampledData kSpaceLocations densityCompensation
+            % outputLogFile = fullfile(dstDir, 'fwrite_bit_log.txt');
+            % idlog = fopen(outputLogFile,'w');
+   
+   
+            fprintf('\n\n -- Starting parfor recon -- \n\n');
+           
+            parfor iBlock = 1:nBlocks
+                tBlock = tic;
+                phaseWidth = 1;
+                jjSpokesInBlock = jjSpokesInBlocks{iBlock};
+                nSpokesInBlock = numel(jjSpokesInBlock);
+               
+                s0 = sampledDatas{iBlock};
+                k0 = tprod(kSpaceLocationss{iBlock}, [1 -5], CA, [-5 2]);
+                c0 = exp(1i * 2 * pi * tprod(kSpaceLocationss{iBlock}, [1 -5], Cb, [-5 2]));
+               
+                d20 = sum(k0.^2, 2);
+                w20 = exp(-2 * pi * (d20 * spatialSigma.^2));
+                w0 = densityCompensations{iBlock} * prod(visibleObjectSize(1:2)) * 2;
+                w0f = w0 / phaseWidth;
+                sw0 = bsxfun(@times, s0, w0f .* w20 .* c0);
+               
+                k03 = mat2cell(k0, size(k0, 1) / nSpokesInBlock * ones(1, nSpokesInBlock), nDimensions);
+                sw03 = mat2cell(sw0, size(k0, 1) / nSpokesInBlock * ones(1, nSpokesInBlock), nChannels);
+                S03pre = cell(size(sw03));
+                paddedChannelSensitivityArray03 = gpuArray(paddedChannelSensitivityArray);
+               
+                for i03Spoke = 1:nSpokesInBlock
+                    G = GpuReconstructur20181008(gridSize, imageSize, kernelSize, gpuArray(k03{i03Spoke}), paddedChannelSensitivityArray03);
+                    S03pre{i03Spoke} = G.grid(sw03{i03Spoke}, false);
+                end
+               
+                I0 = cat(4, S03pre{:});
+                if savePermutedData
+                    I0 = permute(I0, [1 2 4 3]);
+                end
+   
+                fidComplex = fopen(outputFilePath, 'r+');            
+                fseek(fidComplex, prod(imageSize) * 4 * (jjSpokesInBlock(1) - 1), -1);
+                fwrite(fidComplex, real(I0), 'single');
+                fseek(fidComplex, prod(imageSize) * 4 * (nSpokes + jjSpokesInBlock(1) - 1), -1);
+                fwrite(fidComplex, imag(I0), 'single');        
+                fclose(fidComplex);
+   
+                % fprintf(idlog,'spokes %d %d, real_start %d, imag_start %d\n',...
+                %     jjSpokesInBlock(1), jjSpokesInBlock(end), ...
+                %     prod(imageSize) * 4 * (jjSpokesInBlock(1) - 1), ...
+                %     prod(imageSize) * 4 * (nSpokes + jjSpokesInBlock(1) - 1));
+   
+   
+               
+                fprintf('Reconstructed spokes %.0f through %.0f in %.2f seconds.\n', jjSpokesInBlock(1), jjSpokesInBlock(end), toc(tBlock));
+                fprintf('Current time: %s\n', iso8601Now());
+            end
+   
+            % fclose(idlog);
+   
+   
+            seqToc = toc(seqTic);
+           
+            timeSeries.dataIsPermuted = savePermutedData;
+            timeSeries.griddingParams = griddingParams;
+            manifest.sequences(iSequence).timeSeries = timeSeries;
+            manifest.sequences(iSequence).dataIsPermuted = savePermutedData;
+            manifest.sequences(iSequence).elapProcessingTime = seqToc;
+        end
+       
+        for iSequence = 1:nSequences
+            assert(exist(manifest.sequences(iSequence).timeSeries.complexFile, 'file') == 2);
+        end
+   
+        elapTime = toc(initTic);
+        manifest.totalElapsedTime = elapTime;
+       
+        % Display total elapsed time
+        fprintf('Total elapsed time: %.2f seconds.\n', elapTime);
+       
+        saveWithTimestamp(manifestFile, manifest, iso8601Now());
+        [manifestLoaded, manifest, ~] = loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
+        assert(manifestLoaded);
 
     end
-
-    elapTime = toc(initTic);
-    manifest.totalElapsedTime = elapTime;
    
-    % Display total elapsed time
-    fprintf('Total elapsed time: %.2f seconds.\n', elapTime);
-   
-    saveWithTimestamp(manifestFile, manifest, iso8601Now());
-    [manifestLoaded, manifest, ~] = loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
-    assert(manifestLoaded);
-
 end
 
-   
+
+
 end

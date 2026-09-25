@@ -1,8 +1,8 @@
 function result = runGARSOSSTMIntegration(prepared, varargin)
 %runGARSOSSTMINTEGRATION End-to-end GAR-SOS radial/STM operator assembly.
 %
-% Existing ST_maps, eigenValues, and kCal may be supplied; 
-% otherwise kCal is generated and STM_computation is called when it is on the MATLAB path.
+% Existing ST_maps, eigenValues, and kCal may be supplied; otherwise kCal is
+% generated and STM_computation is called when it is on the MATLAB path.
 
     p = inputParser;
     addParameter(p, 'ST_maps', [], @(x) isempty(x) || isnumeric(x));
@@ -42,7 +42,12 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
             'The direct slice-wise STM operator requires one valid zSlice.');
     end
 
-    if isempty(p.Results.kCal)
+    if isempty(p.Results.kCal) && isfield(prepared, 'calibData') && ...
+            isstruct(prepared.calibData) && isfield(prepared.calibData, 'kCal')
+        kCal = prepared.calibData.kCal;
+        prepOutputs = prepared.stmCalibOutputs;
+        prepDiagnostics = prepared.calibrationManifest.sequences(1).diagnostics;
+    elseif isempty(p.Results.kCal)
         [kCal, prepOutputs, prepDiagnostics] = reconstructGARFrameForSTMCoordinateAware( ...
             prepared, p.Results.nbSpokesPerFrame, zSlice, p.Results.CalibrationSize);
     else
