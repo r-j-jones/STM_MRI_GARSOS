@@ -96,8 +96,8 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
         error('prepareGARSOSSliceDataForMCNUFFT:KzOrdering', ...
             'Each readout/spoke must have a consistent Cartesian kz coordinate.');
     end
-    expectedKxy = repmat(locations4(1, 1, :, 1:2), [nReadout, nPartition, 1, 1]);
-    if ~isempty(find(locations4(:, :, :, 1:2) ~= expectedKxy, 1))
+    expectedKxy = repmat(locations4(:, 1, :, 1:2), [1, nPartition, 1, 1]);
+    if any(locations4(:, :, :, 1:2) ~= expectedKxy, 'all')
         error('prepareGARSOSSliceDataForMCNUFFT:TrajectoryOrdering', ...
             'The in-plane trajectory must repeat across Cartesian partitions.');
     end

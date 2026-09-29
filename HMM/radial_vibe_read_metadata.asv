@@ -1,19 +1,18 @@
-function [manifest, manifestFile] = radial_vibe_18_5_4_timestamp_imFIAT(kSpaceID, scanDir,reconstructionDir, forceUpdate)
+function [manifest, manifestFile] = radial_vibe_read_metadata(kSpaceID, scanDir, outDir, forceUpdate)
+%RADIAL_VIBE_READ_METADATA load raw data headers and extract metadata 
+%
+% Modified from radial_vibe_18_5_4_timestamp_imFIAT.m
+% RJJ  |  09-25-2026
 
-dstRootDir = reconstructionDir;
-
-prefixString = 'MultiSeq';
-
+dstRootDir = outDir;
+prefixString = 'RadialVibe';
 dstSeriesDirName = sprintf('%s_Meta', prefixString);
-
 dstDir = fullfile(dstRootDir, dstSeriesDirName);
-
 permissiveMakeDirIfNotExist(dstDir);
 
-manifestFile = fullfile(dstDir, 'deid-manifest.mat');
-
+manifestFileName = 'garsos_meta-manifest.mat';
+manifestFile = fullfile(dstDir, manifestFileName);
 reconstructionTimestamp = '2017-02-20 16:06:50 -05:00';
-
 [manifestLoaded, manifest, ~] = loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
 
 if ~manifestLoaded || forceUpdate
@@ -22,32 +21,28 @@ if ~manifestLoaded || forceUpdate
     
     manifest.prefixString = prefixString;
     manifest.dstRootDir = dstRootDir;
+    manifest.manifes
     
-    %rawDataFiles = examination.getRawDataFiles();
     rawDataDir = fullfile(scanDir, 'raw');
     rawDataFiles = dir(fullfile(rawDataDir, '*.dat'));      
     rawDataFiles = arrayfun(@(x)fullfile(rawDataDir, x.name), rawDataFiles, 'UniformOutput', false);
     
-    % create a 6*1 cell, each file has one
     ss = cellfun(@(x)readVD11MultiRaidFileStructure(x, 'HeaderOnly', true), rawDataFiles, 'UniformOutput', false);
 
     sequenceIds = cellfun(@(x)x.m{end}.param.Meas{1}.HEADER.MeasUID, ss);
-
-    selectedSequenceIds = [kSpaceID];
+    selectedSequenceIds = [kSpaceID]; %#ok<NBRAK2>
     assert(all(ismember(selectedSequenceIds, sequenceIds)));
-    
     nSequences = numel(selectedSequenceIds);
+    manifest.nSequences = nSequences;
     
     for iSequence = 1:nSequences
         
         iDceProtocol = find(sequenceIds == selectedSequenceIds(iSequence));
         
         %s = readVD11MultiRaidFileStructure(rawDataFiles{iDceProtocol},'CalibrationOnly',true);
-        
         q = mapVBVD(rawDataFiles{iDceProtocol});
         
         nSpokes = double(q{end}.image.NLin * q{end}.image.NRep);
-        
         % 0-3499 index
         iiSpokes = double(q{end}.image.Lin(q{end}.image.Par == q{end}.image.centerPar) - 1);
         % timestamp

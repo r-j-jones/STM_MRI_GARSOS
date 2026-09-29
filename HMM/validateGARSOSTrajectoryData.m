@@ -9,8 +9,8 @@ function report = validateGARSOSTrajectoryData(kxy, data, varargin)
         @(x) isnumeric(x) && isscalar(x) && x >= 0);
     parse(p, varargin{:});
 
-    validateattributes(kxy, {'numeric'}, {'3d', 'nonempty'});
-    validateattributes(data, {'numeric'}, {'4d', 'nonempty'});
+    validateattributes(kxy, {'numeric'}, {'nonempty'});
+    validateattributes(data, {'numeric'}, {'nonempty'});
     if size(kxy, 1) ~= size(data, 1) || size(kxy, 2) ~= size(data, 2) || ...
             size(kxy, 3) ~= size(data, 4)
         error('validateGARSOSTrajectoryData:SizeMismatch', ...

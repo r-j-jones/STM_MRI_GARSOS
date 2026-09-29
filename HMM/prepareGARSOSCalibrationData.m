@@ -74,11 +74,14 @@ function [manifest, manifestFile, stmCalibOutputs] = ...
             forceUpdate == "RerunWithoutSaving");
 
     if rerunWithoutSaving
-        forceUpdate = true;
-    elseif islogical(forceUpdate) || isnumeric(forceUpdate)
-        validateattributes(forceUpdate, {'logical', 'numeric'}, ...
+        forceUpdate = true;    
+    elseif islogical(forceUpdate)
+        validateattributes(forceUpdate, {'logical'}, {'scalar'});
+        % Already logical; no conversion is necessary.    
+    elseif isnumeric(forceUpdate)
+        validateattributes(forceUpdate, {'numeric'}, ...
             {'scalar', 'real', 'finite', 'integer', '>=', 0, '<=', 1});
-        forceUpdate = logical(forceUpdate);
+        forceUpdate = logical(forceUpdate);    
     else
         error('prepareGARSOSCalibrationData:InvalidForceUpdate', ...
             ['forceUpdate must be logical, a numeric integer equal to 0 or 1, ' ...
@@ -87,7 +90,16 @@ function [manifest, manifestFile, stmCalibOutputs] = ...
 
     frameParams = localValidateFrameParams(frameParams);
     validateattributes(metaManifest, {'struct'}, {'scalar'});
-    validateattributes(referenceVolumeA, {'struct'}, {'scalar'});
+    
+    validStruct = isstruct(referenceVolumeA) && isscalar(referenceVolumeA);
+    validArrayVolume = isa(referenceVolumeA, 'ArrayVolume') && ...
+                       isscalar(referenceVolumeA);    
+    if ~(validStruct || validArrayVolume)
+        error('loadPrepareGARSOSData:InvalidReference', ...
+            ['referenceVolumeA must be either a scalar struct or a scalar ' ...
+             'ArrayVolume object.']);
+    end
+
     if ~isfield(metaManifest, 'sequences') || ...
             ~isstruct(metaManifest.sequences) || ...
             numel(metaManifest.sequences) ~= 1
@@ -100,12 +112,15 @@ function [manifest, manifestFile, stmCalibOutputs] = ...
     stmCalibOutputs = struct();
 
     destinationDir = fullfile( ...
-        reconstructionDir, sprintf('GARSOS_STM_Calib'));
+        reconstructionDir, sprintf('RadialVibe_STM_Calibration'));
+    permissiveMakeDirIfNotExist(destinationDir);
+
     manifestFile = fullfile(destinationDir, 'garsos-stm-calib-manifest.mat');
     reconstructionTimestamp = '2018-04-18 13:58:25 -04:00';
 
     [manifestLoaded, manifest, ~] = ...
         loadIfExistAndTimestampNewerThan(manifestFile, reconstructionTimestamp);
+    
     if manifestLoaded && ~forceUpdate
         fprintf('Using cached GAR-SOS calibration manifest: %s\n', manifestFile);
         iSequence = 1;
@@ -142,7 +157,7 @@ function [manifest, manifestFile, stmCalibOutputs] = ...
         return;
     end
 
-    permissiveMakeDirIfNotExist(destinationDir);
+    
     nSequences = 1;
     manifest = metaManifest;
     totalTimer = tic;
@@ -269,8 +284,16 @@ function [manifest, manifestFile, stmCalibOutputs] = ...
             'calibrationSize', currentFrameParams.calibrationSize);
 
         % Store results in manifest struct
-        manifest.sequences(iSequence) = localMergeStruct( ...
-            manifest.sequences(iSequence), sequenceMetadata);
+        % manifest.sequences(iSequence) = localMergeStruct( ...
+        %     manifest.sequences(iSequence), sequenceMetadata);
+
+        names = fieldnames(sequenceMetadata);
+        for iName = 1:numel(names)
+            name = names{iName};
+            manifest.sequences(iSequence).(name) = sequenceMetadata.(name);
+        end
+
+
         manifest.sequences(iSequence).diagnostics = diagnostics;
         manifest.sequences(iSequence).elapProcessingTime = toc(sequenceTimer);
         manifest.sequences(iSequence).calibData = calibData;

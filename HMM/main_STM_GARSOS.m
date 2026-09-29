@@ -16,6 +16,7 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
     run /RadOnc-MRI1/Student_Folder/rjones/toolboxes/fessler/irt/setup.m
     % addpath('/path/to/multi-scale-low-rank-MR-recon-master/nufft_toolbox');
     fprintf('\nNUFFT is:\n %s \n\n',which('nufft'));
+    addpath('/RadOnc-MRI1/Student_Folder/rjones/toolboxes/viz');
 
     %% Arg check
     narginchk(3, 3);
@@ -41,6 +42,9 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
     if ~isfield(opts, 'DisplaySlice'), opts.DisplaySlice = false; end
     if ~isfield(opts, 'ReturnDiagnostics'), opts.ReturnDiagnostics = true; end
 
+    %% Set custom STM options
+    if isempty(opts.STMOptions), opts.STMOptions = setCustomSTMOptions(); end
+
     %% Set dirs
     reconstructionDir = fullfile(inputPath, 'reconstruction');
     inputFile = fullfile(reconstructionDir, 'input.mat');
@@ -63,18 +67,22 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
 
     %% Get scan metadata & header info
     [kSpaceID, ~] = parseKspaceIds(loaded.kSpaceID1, loaded.kSpaceID2);
-    [metaManifest, ~] = radial_vibe_18_5_4_timestamp_imFIAT( ...
+    [metaManifest, ~] = radial_vibe_read_metadata( ...
         kSpaceID, inputPath, outputPath, opts.forceUpdate);
 
     frameParams = struct( ...
         'nSpokesPerFrame', opts.nbSpokesPerFrame, ...
         'zSlice', opts.zSlice, ...
         'calibrationSize', opts.calibrationSize);
+    frameParams = validateFrameParams(frameParams);
+    
     griddingParams = struct( ...
         'UseGpu', opts.UseGpu, ...
         'DisplaySlice', opts.DisplaySlice, ...
         'ReturnDiagnostics', opts.ReturnDiagnostics, ...
         'gridOversamplingFactor', 1.375);
+    griddingParams = setNormalizeGriddingParams(griddingParams, ...
+        referenceVolumeA, frameParams);
 
     %% Load and prepare GAR-SOS data once for calibration and STM
     sharedPreparedData = loadPrepareGARSOSData( ...
@@ -88,18 +96,38 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
         'PreparedData', sharedPreparedData);
 
     integrationArgs = {'nbSpokesPerFrame', opts.nbSpokesPerFrame, ...
-        'zSlice', opts.zSlice, 'CalibrationSize', opts.calibrationSize, ...
+        'zSlice', 50, ... %opts.zSlice, ...
+        'CalibrationSize', opts.calibrationSize, ...
         'L', opts.L, 'STMOptions', opts.STMOptions, ...
-        'RadialOptions', opts.RadialOptions};
+        'RadialOptions', opts.RadialOptions, ...
+        'UseSinglePrecision', true};
     for name = {'ST_maps', 'eigenValues', 'kCal'}
         if isfield(opts, name{1}) && ~isempty(opts.(name{1}))
-            integrationArgs(end + 1:end + 2) = {name{1}, opts.(name{1})}; %#ok<AGROW>
+            integrationArgs(end + 1:end + 2) = {name{1}, opts.(name{1})}; 
         end
     end
+    
 
     %% Run STM computation and generate GARSOS-specific operators
+    addpath('/RadOnc-MRI1/Student_Folder/rjones/STM/STM_MRI_GARSOS');
+
     result = runGARSOSSTMIntegration(prepared, integrationArgs{:});
     result.prepared = prepared;
     result.inputPath = inputPath;
     result.outputPath = outputPath;
+
+    %% Do STM Reconstruction
+    reconOptions = struct();
+    reconOptions.tolerance = 1e-5;
+    reconOptions.maxIterations = 50;
+    reconOptions.lambda = 1e-3;
+    reconOptions.runTikhonov = false;
+    reconOptions.verbose = true;
+    
+    stm_recon = STM_reconstruction_GARSOS(result, reconOptions);
+
+    outReconDir = fullfile(outputPath,'RadialVibe_STM_Reconstruction');
+    if ~exist(outReconDir,'dir'), mkdir(outReconDir); end
+
+    save(fullfile(outReconDir, 'test_stm-recon_pcg_z-50.mat'),'stm_recon');
 end

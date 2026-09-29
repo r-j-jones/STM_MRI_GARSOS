@@ -1,5 +1,5 @@
 function pp = setSTMOptions( varargin )
-% setDefaultSTMOptions sets the default options for the STM algorithm.
+% setSTMOptions sets the default options for the STM algorithm.
 %
 %   --tau:                             2D case: Parameter (in Nyquist units) that determines the size of 
 %                                               the k-space kernel. For a rectangular kernel, the size is 

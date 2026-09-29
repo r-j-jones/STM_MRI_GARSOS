@@ -18,7 +18,6 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
     addParameter(p, 'ReconstructionDir', '', @(x) ischar(x) || (isstring(x) && isscalar(x)));
     addParameter(p, 'ReferenceVolumeA', [], @(x) isempty(x) || isstruct(x));
     addParameter(p, 'ForceUpdate', false, @(x) islogical(x) && isscalar(x));
-    addParameter(p, 'UseSinglePrecision', false, @(x) islogical(x) && isscalar(x));
     parse(p, varargin{:});
 
     if ~isstruct(prepared)
@@ -82,7 +81,7 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
             p.Results.nbSpokesPerFrame, p.Results.CalibrationSize, p.Results.L);
         stmMatFilePath = fullfile(stmSaveDir,stmMatFileName);
 
-        if exist(stmMatFilePath,'file') && ~p.Results.ForceUpdate
+        if ~exist(stmMatFilePath,'file') && ~p.Results.ForceUpdate
             fprintf(' -Found existing STMaps.mat file, loading results...\n');
             load(stmMatFilePath,'ST_maps','eigenValues');
 
@@ -150,7 +149,7 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
             'ST_maps temporal dimension must match complete radial frames.');
     end
 
-    fprintf(' -Preparing GARSOS Slice Data For MCNUFFT...\n');
+
     preparedSlice = prepareGARSOSSliceDataForMCNUFFT( ...
         prepared.sampledData, prepared.kSpaceLocations, prepared.spokeIndex, ...
         prepared.nSamples, prepared.nPartitions, prepared.nSpokes, ...
@@ -158,13 +157,13 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
         'CoordinateTransform', prepared.CA, ...
         'TranslationVector', prepared.Cb);
 
-    if 0 == 1
-        outputPlotDirectory = '/RadOnc-MRI1/Student_Folder/rjones/STM/InitialTest_09-20-2026/RadialVibe_STM_Computation';
-        saveKxyFramePNGs(preparedSlice.kxy, 1:10, outputPlotDirectory, 0.05);
-        saveKxyTrajectoryGIF(preparedSlice.kxy, 1:133, outputPlotDirectory)
-    end
 
-    fprintf(' -Validating GARSOS Trajectory and Coil Map Data...\n');
+    outputPlotDirectory = '/RadOnc-MRI1/Student_Folder/rjones/STM/InitialTest_09-20-2026/RadialVibe_STM_Computation';
+    saveKxyFramePNGs(preparedSlice.kxy, 1:10, outputPlotDirectory);
+    saveKxyFramePNGs(preparedSlice.kxy, 1:10, outputPlotDirectory, 0.05);
+    saveKxyTrajectoryGIF(preparedSlice.kxy, 1:133, outputPlotDirectory)
+
+
     validateGARSOSTrajectoryData(preparedSlice.kxy, preparedSlice.data);
 
     kxy = preparedSlice.kxy;
@@ -177,54 +176,21 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
     senseMapsSlice = reshape(prepared.sensitivityMaps(:, :, zSlice, :), ...
         [d.imageSize(1), d.imageSize(2), size(prepared.sensitivityMaps, 4)]);
 
-    if 0 == 1
-        plotCoilSensMapSlice( senseMapsSlice, outputPlotDirectory );
-    end
+    plotCoilSensMapSlice( senseMapsSlice, outputPlotDirectory );
+    
 
-    % fprintf(' -Building GARSOS Radial Encoding Operator...\n');
-    % radialOperator = buildGARSOSRadialEncodingOperator(kxy, d.imageSize(1:2), ...
-    %     senseMapsSlice, p.Results.RadialOptions{:});
-    % 
-    % fprintf(' -Building GARSOS STM Operator...\n');
-    % stmOperator = buildGARSOSSTMOperators(ST_maps, radialOperator.senseMaps, radialOperator);
-    % 
-    % result = struct('kCal', kCal, 'ST_maps', ST_maps, 'eigenValues', eigenValues, ...
-    %     'radialOperator', radialOperator, 'stmOperator', stmOperator, ...
-    %     'radialData', radialData, 'trajectory', kxy, ...
-    %     'senseMapsSlice', senseMapsSlice, ...
-    %     'preparationOutputs', prepOutputs, 'diagnostics', prepDiagnostics, ...
-    %     'nbSpokesPerFrame', p.Results.nbSpokesPerFrame);
 
-    useSinglePrecision = p.Results.UseSinglePrecision;
-    
-    if useSinglePrecision
-        kxy = single(kxy);
-        senseMapsSlice = single(senseMapsSlice);
-        ST_maps = single(ST_maps);
-        radialData = single(radialData);
-    end
-    
-    fprintf(' -Building GARSOS Radial Encoding Operator...\n');
-    radialOperator = buildGARSOSRadialEncodingOperator( ...
-        kxy, d.imageSize(1:2), senseMapsSlice, ...
-        'UseSinglePrecision', useSinglePrecision, ...
-        p.Results.RadialOptions{:});
-    
-    fprintf(' -Building GARSOS STM Operator...\n');
-    stmOperator = buildGARSOSSTMOperators( ...
-        ST_maps, radialOperator.senseMaps, radialOperator, ...
-        'UseSinglePrecision', useSinglePrecision);
-    
-    result = struct( ...
-        'kCal', kCal, ...
-        'ST_maps', stmOperator.ST_maps, ...
-        'eigenValues', eigenValues, ...
-        'radialOperator', radialOperator, ...
-        'stmOperator', stmOperator, ...
-        'radialData', radialData, ...
-        'trajectory', kxy, ...
-        'senseMapsSlice', radialOperator.senseMaps, ...
-        'preparationOutputs', prepOutputs, ...
-        'diagnostics', prepDiagnostics, ...
+
+
+    radialOperator = buildGARSOSRadialEncodingOperator(kxy, d.imageSize(1:2), ...
+        senseMapsSlice, p.Results.RadialOptions{:});
+
+    stmOperator = buildGARSOSSTMOperators(ST_maps, radialOperator.senseMaps, radialOperator);
+
+    result = struct('kCal', kCal, 'ST_maps', ST_maps, 'eigenValues', eigenValues, ...
+        'radialOperator', radialOperator, 'stmOperator', stmOperator, ...
+        'radialData', radialData, 'trajectory', kxy, ...
+        'senseMapsSlice', senseMapsSlice, ...
+        'preparationOutputs', prepOutputs, 'diagnostics', prepDiagnostics, ...
         'nbSpokesPerFrame', p.Results.nbSpokesPerFrame);
 end
