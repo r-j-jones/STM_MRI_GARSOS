@@ -9,8 +9,10 @@ function prepared = loadPrepareGARSOSData( ...
     p = inputParser;
     addParameter(p, 'SequenceIndex', 1, ...
         @(x) isnumeric(x) && isscalar(x) && x >= 1 && x == floor(x));
+    addParameter(p, 'MakePlots', true, @(x) islogical(x) && isscalar(x));
     parse(p, varargin{:});
     iSequence = p.Results.SequenceIndex;
+    makePlots = p.Results.MakePlots;
 
     if ~isstruct(metaManifest) || ~isfield(metaManifest, 'sequences')
         error('loadPrepareGARSOSData:InvalidManifest', ...
@@ -46,8 +48,38 @@ function prepared = loadPrepareGARSOSData( ...
     if iscell(q)
         q = q{end};
     end
-    [noiseWhiteningTransform, channelSensitivityMaps, channelIds, ~] = ...
-        estimateCoilSensitivitieMaps2(s);
+
+    [noiseWhiteningTransform, channelSensitivityMaps, channelIds, debugStructure] = ...
+        estimateGARSOSCoilSensitivityMaps(s);
+    % [orig_noiseWhiteningTransform, orig_channelSensitivityMaps, orig_channelIds, ~] = ...
+    %     estimateCoilSensitivitieMaps2(s);
+
+    
+    if makePlots
+        plotDir = fullfile(metaManifest.dstRootDir,'coil-plots');
+        if ~exist(plotDir,'dir'), mkdir(plotDir); end
+    
+        % Plot noise covariance + whitening matrices
+        figsNoise = plotNoiseMatrices(debugStructure);
+        fnames = fieldnames(figsNoise);
+        for ff=1:length(fnames)
+            curname = fnames{ff};
+            curfig = figsNoise.(curname);
+            print(curfig,fullfile(plotDir,sprintf('%s.png',curname)),'-dpng','-r300');
+        end
+    
+        % Plot coil ref images
+        figsCoils = plotCoilSensitivityDiagnostics(debugStructure, [65,72,130]);
+        fnames = fieldnames(figsCoils);
+        for ff=1:length(fnames)
+            curname = fnames{ff};
+            curfig = figsCoils.(curname);
+            print(curfig,fullfile(plotDir,sprintf('%s.png',curname)),'-dpng','-r300');
+        end
+    end
+
+
+
     [sampledData, kSpaceLocations, densityCompensation, iiSpokes, ...
         timeStamps, nPartitions, nSpokes, nSamples] = ...
         prepareRadialVibeDataForGridding2_3( ...
@@ -96,6 +128,27 @@ function prepared = loadPrepareGARSOSData( ...
     referenceVolumeC = centeredArrayVolumeResize(referenceVolumeA, imageSize);
     alignedMaps = resampleArrayVolumeToSame( ...
         periodicMaps, referenceVolumeC, 'linear', 0);
+
+    if makePlots
+        % Plot aligned coil sens maps (1 slice, all coils)
+        coilmapPlotSlices = [25,50,75];
+        for pp=1:length(coilmapPlotSlices)
+            coilmapPlotSlice = coilmapPlotSlices(pp);
+    
+            figSensMaps = figure;
+            im('row',4,'col',5,abs(squeeze(alignedMaps.A(:,:,coilmapPlotSlice,:))));
+            title(sprintf('Coil sensitivity maps (z=%d)',coilmapPlotSlice),'FontSize',20);
+            cbb=colorbar;
+            cbb.FontSize = 15;
+            figSensMaps.Position = [710 127 1065 765];
+            figSensMaps.Color = 'w';
+            drawnow;
+    
+            outfigname = fullfile(plotDir, sprintf('CoilSensMaps_z%d.png',coilmapPlotSlice));
+            print(gcf,outfigname,'-dpng','-r300');
+    
+        end
+    end
 
     prepared = struct();
     prepared.sequenceIndex = iSequence;

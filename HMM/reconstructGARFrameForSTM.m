@@ -32,9 +32,11 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
 %   'SpatialSigma'       scalar HMM Gaussian weighting parameter, default 0.
 %   'DensityScale'       additional scalar applied after HMM density scaling,
 %                        default 1.
-%   'DisplaySlice'       logical, default false.
+%   'DisplaySlice'       logical, default true.
 %   'DisplaySliceIndex'  one-based display slice, default central slice.
 %   'ReturnDiagnostics'  logical, default false.
+%   'SaveSenseImageGif'  logical, default true.
+%   'OutputGifDir'       char/string, default ''.
 %
 % Outputs:
 %   kCal       [NxCal x NyCal x NFrames] for one slice, or
@@ -58,9 +60,11 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
     addParameter(p, 'PhaseWidth', 1, @(x) isnumeric(x) && isscalar(x) && isfinite(x) && x ~= 0);
     addParameter(p, 'SpatialSigma', 0, @(x) isnumeric(x) && isscalar(x) && isfinite(x) && x >= 0);
     addParameter(p, 'DensityScale', 1, @(x) isnumeric(x) && isscalar(x) && isfinite(x));
-    addParameter(p, 'DisplaySlice', false, @(x) islogical(x) && isscalar(x));
+    addParameter(p, 'DisplaySlice', true, @(x) islogical(x) && isscalar(x));
     addParameter(p, 'DisplaySliceIndex', [], @(x) isnumeric(x) && (isempty(x) || isscalar(x)));
     addParameter(p, 'ReturnDiagnostics', false, @(x) islogical(x) && isscalar(x));
+    addParameter(p, 'SaveSenseImageGif', true, @(x) ischar(x) || (isstring(x) && isscalar(x)));
+    addParameter(p, 'OutputGifDir', '', @(x) ischar(x) || (isstring(x) && isscalar(x)));
     parse(p, varargin{:});
 
     validateattributes(sampledData, {'numeric'}, {'2d', 'nonempty'}, mfilename, 'sampledData');
@@ -142,6 +146,11 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
             any(~isfinite(spokeIndex(:)))
         error('reconstructGARFrameForSTM:NonFiniteInput', ...
             'Coordinates, density compensation, and spoke indices must be finite.');
+    end
+
+    if p.Results.SaveSenseImageGif && ~isempty(p.Results.OutputGifDir) && ...
+            ~exist(p.Results.OutputGifDir,'dir') 
+        mkdir(p.Results.OutputGifDir);
     end
 
     spokeValues = unique(spokeIndex(:), 'stable');
@@ -288,6 +297,17 @@ function [kCal, outputs, diagnostics] = reconstructGARFrameForSTM( ...
     if any(~isfinite(kCal(:)))
         error('reconstructGARFrameForSTM:NonFiniteOutput', ...
             'The extracted kCal contains NaN or Inf values.');
+    end
+
+    if p.Results.SaveSenseImageGif
+        make_senseImages_gifs( senseImages, nSpokesPerFrame, ...
+            displaySliceIndex, 1:nFrames, p.Results.OutputGifDir );
+
+        make_kCal_gifs( kCal, nSpokesPerFrame, displaySliceIndex, ...
+            1:nFrames, calibrationSize, p.Results.OutputGifDir  );
+
+        make_kSpace2D_gifs( kSpace2D, nSpokesPerFrame, displaySliceIndex, ...
+            1:nFrames, p.Results.OutputGifDir );
     end
 
     outputs = struct();

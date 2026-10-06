@@ -119,7 +119,7 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
             % Run STM computation
             fprintf(' -Running STM computation...\n');
             stmReconTic = tic;
-            [ST_maps, eigenValues] = STM_computation( ...
+            [ST_maps, eigenValues, U, G] = STM_computation( ...
                 kCalForSTM, d.imageSize(1:2), p.Results.L, stmOptions{:});
             fprintf(' -Finished STM computation-\nElapsed Time = %.1f s\n',toc(stmReconTic));
     

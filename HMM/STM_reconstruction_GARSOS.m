@@ -51,6 +51,7 @@ function reconstruction = STM_reconstruction_GARSOS(result, opts)
         'preconditionerNUFFTApproximation', 'scalar');
     preconditionerFloorFraction = getOption(opts, ...
         'preconditionerFloorFraction', 1e-4);
+    useToeplitzNormal=false;
 
     validateattributes(tolerance, {'numeric'}, {'scalar', 'real', 'positive'});
     validateattributes(maxIterations, {'numeric'}, ...
@@ -108,6 +109,17 @@ function reconstruction = STM_reconstruction_GARSOS(result, opts)
     if logical(verbose)
         disp('Starting CG-STM GAR-SOS reconstruction...');
     end
+
+    % % A and Ah are forward/adjoint function handles. 
+    % x = randn(imageSize) + 1i*randn(imageSize); 
+    % x = x / norm(x(:)); 
+    % for k = 1:15 
+    % y = Ah(A(x)); 
+    % spectralScale = norm(y(:)); 
+    % x = y / spectralScale; 
+    % end
+
+
     tRecon = tic;
     [coefficients, flag, relativeResidual, iterations, residualHistory] = ...
         pcg(normalOperator, rhs, tolerance, maxIterations, [], [], initialGuess);

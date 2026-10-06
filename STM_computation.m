@@ -1,4 +1,4 @@
-function [ST_maps, eigenValues] = STM_computation(kCal, dim_sens, L, varargin)
+function [ST_maps, eigenValues, U, G] = STM_computation(kCal, dim_sens, L, varargin)
 
     % Input parameters:
     %   --kCal:                            2D case: N1_cal x N2_cal x Nc block of calibration data, where 
@@ -223,7 +223,10 @@ function [ST_maps, eigenValues] = STM_computation(kCal, dim_sens, L, varargin)
 
     Nc = size(kCal, 3);
     patchSize = size(U, 1) / Nc;
-    clear U
+
+    if nargout<3
+        clear U
+    end
 
 
     if p.Results.verbose == 1
@@ -254,7 +257,9 @@ function [ST_maps, eigenValues] = STM_computation(kCal, dim_sens, L, varargin)
 
     t_null_G = toc(t_null_G);
 
-    clear G
+    if nargout<4
+        clear G
+    end
 
     if p.Results.verbose == 1
         if p.Results.OrthogonalIteration_G_nullspace_vectors == 0

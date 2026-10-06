@@ -60,10 +60,12 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
 
     %% Load reference (vendor-reconed) dicom volume
     if ~isfield(opts, 'referenceVolumeA') || isempty(opts.referenceVolumeA)
-        [referenceVolumeA, ~, ~] = loadReferenceDicomImage(inputPath, true);
+        [referenceVolumeA, ~, ~] = loadReferenceDicomImage(inputPath, true);  
+        % save(referenceImageFile,'referenceVolumeA');
     else
         referenceVolumeA = opts.referenceVolumeA;
     end
+    
 
     %% Get scan metadata & header info
     [kSpaceID, ~] = parseKspaceIds(loaded.kSpaceID1, loaded.kSpaceID2);
@@ -85,9 +87,12 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
         referenceVolumeA, frameParams);
 
     %% Load and prepare GAR-SOS data once for calibration and STM
+
     sharedPreparedData = loadPrepareGARSOSData( ...
         metaManifest, referenceVolumeA, griddingParams, ...
-        'SequenceIndex', 1);
+        'SequenceIndex', 1, ...
+        'MakePlots', false);
+
     prepared = prepareGARSOSSTMData( ...
         metaManifest, outputPath, referenceVolumeA, opts.forceUpdate, ...
         'SequenceIndex', 1, ...
@@ -95,8 +100,9 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
         'GriddingParams', griddingParams, ...
         'PreparedData', sharedPreparedData);
 
+    stmZSlice = 50;
     integrationArgs = {'nbSpokesPerFrame', opts.nbSpokesPerFrame, ...
-        'zSlice', 50, ... %opts.zSlice, ...
+        'zSlice', stmZSlice, ... %opts.zSlice, ...
         'CalibrationSize', opts.calibrationSize, ...
         'L', opts.L, 'STMOptions', opts.STMOptions, ...
         'RadialOptions', opts.RadialOptions, ...
@@ -119,15 +125,41 @@ function result = main_STM_GARSOS(inputPath, outputPath, opts)
     %% Do STM Reconstruction
     reconOptions = struct();
     reconOptions.tolerance = 1e-5;
-    reconOptions.maxIterations = 50;
-    reconOptions.lambda = 1e-3;
-    reconOptions.runTikhonov = false;
+    reconOptions.maxIterations = 250;
+    reconOptions.runTikhonov = true;
     reconOptions.verbose = true;
+    reconOptions.lambdaDesired = 1e-2;
+    reconOptions.lambda = estimate_pcg_tikh_lambda( result, reconOptions.lambdaDesired, 10, true );
     
     stm_recon = STM_reconstruction_GARSOS(result, reconOptions);
 
     outReconDir = fullfile(outputPath,'RadialVibe_STM_Reconstruction');
     if ~exist(outReconDir,'dir'), mkdir(outReconDir); end
 
-    save(fullfile(outReconDir, 'test_stm-recon_pcg_z-50.mat'),'stm_recon');
+    save(fullfile(outReconDir, 'test_stm-recon_250-iters_pcg+tik_z-50.mat'),'stm_recon');
+
+
+    %% Save gifs of reconed images
+    outGifDir = fullfile(outReconDir,'gifs');
+    if ~exist(outGifDir,'dir'), mkdir(outGifDir); end
+
+    frameNb = 67;
+
+    curdata=stm_recon.sense_recon_stm_tik; 
+    reconType='pcg-tikh';
+    make_stm_recon_intensity_plots( curdata, outGifDir, reconType, stmZSlice, frameNb );
+
+    curdata=stm_recon.sense_recon_stm; 
+    reconType='pcg';
+    make_stm_recon_intensity_plots( curdata, outGifDir, reconType, stmZSlice, frameNb );
+
+
+    save_SpatialCoeff_images( stm_recon, outGifDir );
+
+    save_STM_eigenValue_gifs( result, opts.nbSpokesPerFrame, outGifDir );
+
+
+
+
+
 end
