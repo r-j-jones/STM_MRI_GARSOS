@@ -19,6 +19,8 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
     addParameter(p, 'ReferenceVolumeA', [], @(x) isempty(x) || isstruct(x));
     addParameter(p, 'ForceUpdate', false, @(x) islogical(x) && isscalar(x));
     addParameter(p, 'UseSinglePrecision', false, @(x) islogical(x) && isscalar(x));
+    addParameter(p, 'ZReconstructionMethod', 'direct-ifft', ...
+        @(x) ischar(x) || (isstring(x) && isscalar(x)));
     parse(p, varargin{:});
 
     if ~isstruct(prepared)
@@ -43,6 +45,12 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
     end
 
     d = prepared.dimensions;
+    if isfield(prepared, 'griddingParams') && ...
+            isfield(prepared.griddingParams, 'kernelSize')
+        kernelSize = prepared.griddingParams.kernelSize;
+    else
+        kernelSize = [7 7 7];
+    end
     if isempty(p.Results.nbSpokesPerFrame)
         error('runGARSOSSTMIntegration:MissingFrameSize', ...
             'nbSpokesPerFrame must be supplied explicitly.');
@@ -156,7 +164,11 @@ function result = runGARSOSSTMIntegration(prepared, varargin)
         prepared.nSamples, prepared.nPartitions, prepared.nSpokes, ...
         p.Results.nbSpokesPerFrame, zSlice, ...
         'CoordinateTransform', prepared.CA, ...
-        'TranslationVector', prepared.Cb);
+        'TranslationVector', prepared.Cb, ...
+        'ZReconstructionMethod', p.Results.ZReconstructionMethod, ...
+        'ImageSizeZ', d.imageSize(3), ...
+        'GridSizeZ', d.gridSize(3), ...
+        'KernelSizeZ', kernelSize(3));
 
     if 0 == 1
         outputPlotDirectory = '/RadOnc-MRI1/Student_Folder/rjones/STM/InitialTest_09-20-2026/RadialVibe_STM_Computation';

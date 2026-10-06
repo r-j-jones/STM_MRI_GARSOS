@@ -5,8 +5,8 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
 %
 % Restores the flattened preparation output to:
 %   [readout, partition, spoke, coil]
-% and applies a centered unitary inverse FFT along the Cartesian partition
-% dimension before selecting an image-space z slice.
+% and applies either the legacy partition IFFT or the full-reconstruction
+% compatible gridded z-only reconstruction before selecting a z slice.
 %
 % Inputs:
 %   sampledData       [nReadout*nPartition*nSpokes, nCoil]
@@ -23,6 +23,10 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
 %                     'fftshift-then-ifftshift'
 %   'CoordinateTransform' 3x3 trajectory transform, default eye(3)
 %   'TranslationVector'   3x1 Fourier phase translation, default zeros(3,1)
+%   'ZReconstructionMethod'  'direct-ifft' (default) or 'gridded'
+%   'ImageSizeZ'         target image-space z size for 'gridded'
+%   'GridSizeZ'          oversampled Cartesian z size for 'gridded'
+%   'KernelSizeZ'        Kaiser-Bessel z kernel width for 'gridded'
 %
 % Outputs:
 %   prepared.data     [nReadout, nbSpokesPerFrame, nCoil, nFrame]
@@ -42,10 +46,19 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
         @(x) isnumeric(x) && isequal(size(x), [3 3]) && all(isfinite(x(:))));
     addParameter(p, 'TranslationVector', zeros(3, 1), ...
         @(x) isnumeric(x) && numel(x) == 3 && all(isfinite(x(:))));
+    addParameter(p, 'ZReconstructionMethod', 'direct-ifft', ...
+        @(x) ischar(x) || (isstring(x) && isscalar(x)));
+    addParameter(p, 'ImageSizeZ', [], ...
+        @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x > 0 && mod(x, 1) == 0));
+    addParameter(p, 'GridSizeZ', [], ...
+        @(x) isempty(x) || (isnumeric(x) && isscalar(x) && x > 0 && mod(x, 1) == 0));
+    addParameter(p, 'KernelSizeZ', 7, ...
+        @(x) isnumeric(x) && isscalar(x) && x > 0 && mod(x, 2) == 1);
     parse(p, varargin{:});
     kzTransform = char(p.Results.KzTransform);
     coordinateTransform = p.Results.CoordinateTransform;
     translationVector = p.Results.TranslationVector(:);
+    zReconstructionMethod = lower(char(p.Results.ZReconstructionMethod));
 
     validateattributes(sampledData, {'numeric'}, {'2d', 'nonempty'});
     validateattributes(kSpaceLocations, {'numeric'}, {'2d', 'ncols', 3});
@@ -62,9 +75,13 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
         error('prepareGARSOSSliceDataForMCNUFFT:SizeMismatch', ...
             'Flattened inputs must contain nReadout*nPartition*nSpokes rows.');
     end
-    if zIndex > nPartition
+    if strcmp(zReconstructionMethod, 'direct-ifft') && zIndex > nPartition
         error('prepareGARSOSSliceDataForMCNUFFT:InvalidZIndex', ...
             'zIndex must be within 1:nPartition.');
+    end
+    if ~ismember(zReconstructionMethod, {'direct-ifft', 'gridded'})
+        error('prepareGARSOSSliceDataForMCNUFFT:InvalidZReconstructionMethod', ...
+            'ZReconstructionMethod must be ''direct-ifft'' or ''gridded''.');
     end
     if any(~isfinite(sampledData(:))) || any(~isfinite(kSpaceLocations(:))) || ...
             any(~isfinite(spokeIndex(:)))
@@ -114,24 +131,38 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
         spokeValues(1:nFrame * nbSpokesPerFrame), ...
         [nbSpokesPerFrame, nFrame]);
 
-    switch kzTransform
-        case 'ifftshift-then-fftshift'
-            % Default: centered kz -> centered image-space z convention.
-            dataZ4 = fftshift(ifft(ifftshift(data4, 2), [], 2), 2) * sqrt(nPartition);
-            % Alternative convention to test if the z orientation is wrong:
-            % dataZ4 = ifftshift(ifft(fftshift(data4, 2), [], 2), 2) * sqrt(nPartition);
-        case 'fftshift-then-ifftshift'
-            % Alternative: centered kz ordering with the opposite shift pair.
-            dataZ4 = ifftshift(ifft(fftshift(data4, 2), [], 2), 2) * sqrt(nPartition);
-        otherwise
-            error('prepareGARSOSSliceDataForMCNUFFT:InvalidKzTransform', ...
-                'Unknown KzTransform option: %s', kzTransform);
+    switch zReconstructionMethod
+        case 'direct-ifft'
+            switch kzTransform
+                case 'ifftshift-then-fftshift'
+                    % Legacy centered partition-FFT convention.
+                    dataZ4 = fftshift(ifft(ifftshift(data4, 2), [], 2), 2) * sqrt(nPartition);
+                case 'fftshift-then-ifftshift'
+                    dataZ4 = ifftshift(ifft(fftshift(data4, 2), [], 2), 2) * sqrt(nPartition);
+                otherwise
+                    error('prepareGARSOSSliceDataForMCNUFFT:InvalidKzTransform', ...
+                        'Unknown KzTransform option: %s', kzTransform);
+            end
+            selectedZ = dataZ4(:, zIndex, 1:nFrame * nbSpokesPerFrame, :);
+        case 'gridded'
+            imageSizeZ = p.Results.ImageSizeZ;
+            gridSizeZ = p.Results.GridSizeZ;
+            if isempty(imageSizeZ) || isempty(gridSizeZ)
+                error('prepareGARSOSSliceDataForMCNUFFT:MissingZGridSize', ...
+                    'ImageSizeZ and GridSizeZ are required for gridded reconstruction.');
+            end
+            [selectedZ, zDiagnostics] = reconstructGARSOSRadialZSlice( ...
+                sampledData, kSpaceLocations, nReadout, nPartition, nSpokes, ...
+                coordinateTransform, imageSizeZ, gridSizeZ, ...
+                p.Results.KernelSizeZ, zIndex, ...
+                'TranslationVector', translationVector, ...
+                'ReturnAllZ', false);
+            selectedZ = reshape(selectedZ(:, 1:nFrame * nbSpokesPerFrame, :), ...
+                [nReadout, nFrame * nbSpokesPerFrame, nCoil]);
+            selectedZ = reshape(selectedZ, ...
+                [nReadout, nbSpokesPerFrame, nFrame, nCoil]);
+            selectedZ = permute(selectedZ, [1 2 4 3]);
     end
-
-    selectedZ = dataZ4(:, zIndex, 1:nFrame * nbSpokesPerFrame, :);
-    selectedZ = reshape(selectedZ, ...
-        [nReadout, nbSpokesPerFrame, nFrame, nCoil]);
-    selectedZ = permute(selectedZ, [1 2 4 3]);
 
     kxy4 = locations4(:, :, :, 1) + 1i * locations4(:, :, :, 2);
     kxyFrame = kxy4(:, 1, 1:nFrame * nbSpokesPerFrame);
@@ -148,6 +179,7 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
         'nFrame', nFrame, ...
         'zIndex', zIndex, ...
         'kzTransform', kzTransform, ...
+        'zReconstructionMethod', zReconstructionMethod, ...
         'coordinateTransform', coordinateTransform, ...
         'translationVector', translationVector, ...
         'rawKSpaceLocations4D', rawLocations4, ...
@@ -155,6 +187,9 @@ function prepared = prepareGARSOSSliceDataForMCNUFFT( ...
         'dataShape', '[readout, spoke, coil, frame]', ...
         'kxyShape', '[readout, spoke, frame]', ...
         'kSpaceLocations4D', locations4);
+    if strcmp(zReconstructionMethod, 'gridded')
+        prepared.zDiagnostics = zDiagnostics;
+    end
 end
 
 function prepared = makePreparedOutput(data, kxy, frameSpokes, varargin)

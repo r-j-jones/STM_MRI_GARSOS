@@ -1,0 +1,84 @@
+\documentclass[aspectratio=169,professionalfonts]{beamer}
+\usetheme{Madrid}
+\usecolortheme{default}
+\usepackage{amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\title{STM-GARSOS Processing: Concise Overview}
+\author{STM-GARSOS workflow}
+\date{\today}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Objective and model}
+\begin{itemize}
+\item Represent each dynamic image as $X_t(x,y)=\sum_{\ell=1}^{L} {\rm ST}_{t,\ell}(x,y) C_\ell(x,y)$.
+\item Estimate L spatial coefficient images from multicoil radial data.
+\item Synthesize the complete dynamic image series after the coefficient solve.
+\end{itemize}
+\end{frame}
+\begin{frame}{Raw-data preparation}
+\begin{itemize}
+\item Load GAR-SOS metadata, raw k-space, and a vendor-reconstructed reference volume.
+\item Correct readout delay and prepare partition data.
+\item Estimate/apply coil-noise whitening.
+\item Generate normalized [kx, ky, kz] trajectory coordinates.
+\item Compute radial density-compensation weights.
+\end{itemize}
+\end{frame}
+\begin{frame}{Frame formation}
+\begin{itemize}
+\item Flattened arrays retain one row per readout/partition/spoke sample.
+\item Spokes are grouped consecutively into temporal frames.
+\item Historical baseline: 15 spokes per frame and approximately 133 complete frames.
+\item Incomplete trailing spokes are discarded.
+\end{itemize}
+\end{frame}
+\begin{frame}{Calibration-data path}
+\begin{itemize}
+\item Each frame is reconstructed with 3-D Kaiser-Bessel gridding.
+\item Oversampled grid: approximately 308 x 308 x 132.
+\item 3-D inverse FFT and centered resize produce a 224 x 224 x 96 volume.
+\item A selected z slice is transformed to 2-D Cartesian k-space.
+\item A central 32 x 32 calibration square is extracted.
+\end{itemize}
+\end{frame}
+\begin{frame}{STM calibration}
+\begin{itemize}
+\item $k_{\rm Cal}$ is supplied to $\texttt{STM\_computation}$.
+\item The calibration data span the temporal frames.
+\item The STM algorithm estimates ST maps and eigenvalues.
+\item Historical baseline: L = 7 and 224 x 224 spatial map dimensions.
+\end{itemize}
+\end{frame}
+\begin{frame}{Radial STM data}
+\begin{itemize}
+\item The historical baseline used a direct centered 58-point partition IFFT.
+\item One z index is selected and the coil dimension is preserved.
+\item Output radial data: [readout x spokes/frame x coils x frames].
+\item In-plane kx/ky coordinates are retained for the NUFFT.
+\end{itemize}
+\end{frame}
+\begin{frame}{Multicoil radial operator}
+\begin{itemize}
+\item Forward: $d_c={\cal N}_{\rm radial}(S_c \odot X)$.
+\item Adjoint: ${\cal F}^H(d)=\sum_c S_c^* \odot {\cal N}_{\rm radial}^H(d_c)$.
+\item Sensitivity maps are forward receive-coil maps.
+\item Coils remain separate in the data fidelity term.
+\end{itemize}
+\end{frame}
+\begin{frame}{STM operator and PCG}
+\begin{itemize}
+\item STM synthesis maps coefficients C to dynamic images X.
+\item The radial operator maps X to predicted multicoil radial data.
+\item Solve $({\cal A}^H{\cal A})C={\cal A}^H y$ with PCG.
+\item Optional Tikhonov solve adds lambda I.
+\end{itemize}
+\end{frame}
+\begin{frame}{Output and historical caveats}
+\begin{itemize}
+\item Output: coefficient images plus synthesized [224 x 224 x frames] image series.
+\item The initial baseline used the direct 58-point z/partition IFFT.
+\item Later work addresses forward-map estimation, z-grid consistency, scaling, and conditioning.
+\item The slides describe the original stable path, not all later corrections.
+\end{itemize}
+\end{frame}
+\end{document}

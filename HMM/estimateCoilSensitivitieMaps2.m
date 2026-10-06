@@ -1,4 +1,8 @@
-function [noiseWhiteningTransform, channelSensitivityMaps, adcChannelIds, debugStructure] = estimateCoilSensitivitieMaps2(s)
+function [noiseWhiteningTransform, channelSensitivityMaps, adcChannelIds, debugStructure] = estimateCoilSensitivitieMaps2(s, varargin)
+
+    p = inputParser;
+    addParameter(p, 'BodyMask', [], @(x) isempty(x) || islogical(x) || isnumeric(x));
+    parse(p, varargin{:});
 
 nAcquisitions = numel(unique(s.m{1}.mdh.sLC.ushAcquisition));
 
@@ -114,8 +118,11 @@ D2 = centeredFFT(centeredResize(bsxfun(@times, C2, F1), newArraySize2), 3);
 D20 = sum(D2, 4); % I'm guessing here. Don't know what the two different BC channels mean. But it looks more homogenous if I sum them.
 D20ref = sum(D2ref, 4);
 
-J0 = bsxfun(@times, conj(D1), abs(D20));
-W0 = sum(abs(D1).^2, 4);
+% Estimate forward receive sensitivities from D1 = S .* D20:
+% S = D1 .* conj(D20) ./ abs(D20).^2.  The complex body reference is
+% required to preserve the receive-coil phase.
+J0 = bsxfun(@times, D1, conj(D20));
+W0 = abs(D20).^2;
 
 JF0 = centeredFFT(bsxfun(@times, centeredIFFT(J0, 3), F2), 3);
 WF0 = centeredFFT(bsxfun(@times, centeredIFFT(W0, 3), F2), 3);
@@ -123,7 +130,26 @@ WF0 = centeredFFT(bsxfun(@times, centeredIFFT(W0, 3), F2), 3);
 % JF0 = gaussFilterArray(J0, [2 2 2]);
 % WF0 = gaussFilterArray(W0, [2 2 2]);
 
+bodyMask = p.Results.BodyMask;
+if isempty(bodyMask)
+    bodyMask = true(size(WF0));
+else
+    bodyMask = logical(bodyMask);
+    if ~isequal(size(bodyMask), size(WF0))
+        error('estimateCoilSensitivitieMaps2:BodyMaskSize', ...
+            'BodyMask must match the spatial dimensions of the sensitivity maps.');
+    end
+end
+positiveReference = abs(WF0(bodyMask));
+if isempty(positiveReference) || ~any(isfinite(positiveReference))
+    error('estimateCoilSensitivitieMaps2:InvalidBodyReference', ...
+        'The body reference contains no finite voxels inside BodyMask.');
+end
+denominatorFloor = max(eps(class(WF0)), ...
+    cast(1e-6 * max(positiveReference(isfinite(positiveReference))), 'like', WF0));
+WF0 = max(abs(WF0), denominatorFloor);
 C = bsxfun(@rdivide, JF0, WF0);
+C(repmat(~bodyMask, [1 1 1 size(C, 4)])) = 0;
 
 T2 = sum(C.*D1ref,4);
 
@@ -142,6 +168,24 @@ channelSensitivityMaps.r0 = channelSensitivityMaps.R*(diag(voxelSize)*(-[floor(2
 debugStructure.D20ref = channelSensitivityMaps.cloneWithNewContent(D20ref);
 debugStructure.T2 = channelSensitivityMaps.cloneWithNewContent(T2);
 debugStructure.bodyCoilImage = channelSensitivityMaps.cloneWithNewContent(abs(D20ref));
+
+mapPower = sum(abs(C).^2, 4);
+mapPowerFloor = max(eps(class(mapPower)), ...
+    cast(1e-6 * max(mapPower(bodyMask)), 'like', mapPower));
+calibrationEstimate = sum(conj(C).*D1, 4) ./ ...
+    max(mapPower, mapPowerFloor);
+calibrationResidual = D1 - bsxfun(@times, C, calibrationEstimate);
+maskedResidual = calibrationResidual(repmat(bodyMask, [1 1 1 size(C, 4)]));
+maskedData = D1(repmat(bodyMask, [1 1 1 size(C, 4)]));
+mapRss = sqrt(sum(abs(C).^2, 4));
+mapRssMasked = mapRss(bodyMask);
+debugStructure.calibrationResidual = norm(maskedResidual(:)) / ...
+    max(norm(maskedData(:)), eps);
+debugStructure.mapRssPercentiles = localPercentiles(mapRssMasked, [50 99]);
+fprintf('Sensitivity-map calibration residual: %.3e\n', ...
+    debugStructure.calibrationResidual);
+fprintf('Sensitivity-map RSS percentiles (50th, 99th): %.3e, %.3e\n', ...
+    debugStructure.mapRssPercentiles(1), debugStructure.mapRssPercentiles(2));
 
 % sigma = 15/1; % Cycles per FOV
 % 
@@ -198,8 +242,18 @@ debugStructure.bodyCoilImage = channelSensitivityMaps.cloneWithNewContent(abs(D2
 % 
 % coilCalibrationImages = {a, d202, d102};
 
-
-
+function values = localPercentiles(data, percentages)
+    data = sort(data(isfinite(data)));
+    if isempty(data)
+        values = nan(size(percentages));
+        return;
+    end
+    positions = 1 + (numel(data) - 1) .* percentages ./ 100;
+    lower = floor(positions);
+    upper = ceil(positions);
+    fraction = positions - lower;
+    values = data(lower) + fraction .* (data(upper) - data(lower));
+end
 
 
 

@@ -1,0 +1,197 @@
+\documentclass[aspectratio=169,professionalfonts]{beamer}
+\usetheme{Madrid}
+\usecolortheme{default}
+\usepackage{amsmath,amssymb}
+\usepackage[T1]{fontenc}
+\title{STM-GARSOS Processing: Detailed Methods}
+\author{STM-GARSOS workflow}
+\date{\today}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Reconstruction objective}
+\begin{itemize}
+\item Dynamic image model: $X_t(x,y)=\sum_{\ell=1}^{L}{\rm ST}_{t,\ell}(x,y)C_\ell(x,y)$.
+\item Unknown: C\_l(x,y), an [Nx x Ny x L] coefficient volume.
+\item Measured data: multicoil radial samples for each temporal frame.
+\item Goal: fit the measured radial data while restricting temporal variation to the STM subspace.
+\end{itemize}
+\end{frame}
+\begin{frame}{Entry point and inputs}
+\begin{itemize}
+\item main\_STM\_GARSOS loads input k-space identifiers and scan metadata.
+\item A vendor-reconstructed reference volume defines target geometry.
+\item prepareGARSOSSTMData creates shared prepared data and calibration metadata.
+\item Historical defaults: 15 spokes/frame, 32 x 32 calibration square, L = 7.
+\end{itemize}
+\end{frame}
+\begin{frame}{Prepared trajectory and data}
+\begin{itemize}
+\item sampledData: [nReadout x nPartitions x nSpokes, nCoils].
+\item kSpaceLocations: flattened [kx, ky, kz] rows.
+\item spokeIndex: one identifier per flattened sample.
+\item DCF: one radial density-compensation value per sample.
+\item Coordinates use normalized cycles/FOV-like units.
+\end{itemize}
+\end{frame}
+\begin{frame}{Trajectory construction}
+\begin{itemize}
+\item $k_x=\rho\cos(\phi)$ and $k_y=\rho\sin(\phi)$.
+\item rho is the centered readout coordinate normalized by readout length.
+\item phi follows the GAR-SOS spoke-angle convention.
+\item kz is generated from the partition index and acquisition geometry.
+\item The arrays are flattened in readout/partition/spoke order.
+\end{itemize}
+\end{frame}
+\begin{frame}{Readout processing and whitening}
+\begin{itemize}
+\item Readout delay correction is estimated from selected calibration lines.
+\item Readout Fourier processing is applied before the final flattening.
+\item Partition padding is performed during preparation.
+\item Noise covariance is estimated from noise acquisitions.
+\item The whitening transform is applied across receive channels.
+\end{itemize}
+\end{frame}
+\begin{frame}{Density compensation}
+\begin{itemize}
+\item The existing DCF is based on radial shell-sector area.
+\item It is generated from the in-plane radius and readout increment.
+\item Frame-specific DCF values are selected with the frame samples.
+\item Calibration gridding applies DCF and additional reconstruction weights.
+\item The later STM radial operator uses its prepared radial samples and NUFFT convention.
+\end{itemize}
+\end{frame}
+\begin{frame}{Frame grouping}
+\begin{itemize}
+\item Unique spoke identifiers define the acquisition order.
+\item nFrames = floor(nSpokes / nSpokesPerFrame).
+\item Each frame contains all readout and partition samples for its spokes.
+\item Incomplete trailing spokes are excluded.
+\item For the baseline, 15 spokes/frame produced approximately 133 frames.
+\end{itemize}
+\end{frame}
+\begin{frame}{Calibration reconstruction}
+\begin{itemize}
+\item reconstructGARFrameForSTM selects frameData, frameTrajectory, and frameDCF.
+\item Coordinate transform and translation phase correction are applied.
+\item Gaussian/spatial weighting and DCF scaling are applied.
+\item GpuReconstructur20181008 grids every coil separately.
+\item The class applies inverse FFT, resize/deapodization, and coil-profile accumulation.
+\end{itemize}
+\end{frame}
+\begin{frame}{3-D grid and target geometry}
+\begin{itemize}
+\item Target image geometry: imageSize = [224, 224, 96].
+\item Oversampled grid: gridSize = ceil(1.375 x imageSize) = [308, 308, 132].
+\item Samples are deposited with a 3-D Kaiser-Bessel kernel.
+\item ifftn is applied on the oversampled Cartesian grid.
+\item shiftAndResize maps the result to the centered 224 x 224 x 96 grid.
+\end{itemize}
+\end{frame}
+\begin{frame}{Calibration k-space extraction}
+\begin{itemize}
+\item Select reconstructedVolume(:, :, zSlice).
+\item Apply fftshift(fft2(ifftshift(senseImage))).
+\item Extract the centered calibration square with localCentralRegion.
+\item Baseline calibrationSize = [32, 32].
+\item Single-slice kCal has dimensions [32 x 32 x nFrames].
+\end{itemize}
+\end{frame}
+\begin{frame}{STM computation}
+\begin{itemize}
+\item $\texttt{STM\_computation}$ receives $k_{\rm Cal}$, desired map dimensions, $L$, and options.
+\item The calibration data encode temporal correlations across frames.
+\item The algorithm estimates ST\_maps [Nx x Ny x Nt x L].
+\item eigenValues provide a diagnostic of model rank/content.
+\item The baseline used L = 7 because more modes appeared informative than in the Cartesian demo.
+\end{itemize}
+\end{frame}
+\begin{frame}{Historical z-slice preparation}
+\begin{itemize}
+\item prepareGARSOSSliceDataForMCNUFFT restores [readout, partition, spoke, coil].
+\item It applies the selected translation phase and coordinate transform.
+\item Historical baseline: centered direct IFFT along the 58 partition entries.
+\item The requested zIndex is selected from that 58-point result.
+\item This differs from the later 58-to-96 gridded z-only correction.
+\end{itemize}
+\end{frame}
+\begin{frame}{Radial STM data dimensions}
+\begin{itemize}
+\item After frame grouping: radialData [nReadout x nSpokesPerFrame x nCoil x nFrame].
+\item kxy [nReadout x nSpokesPerFrame x nFrame].
+\item The in-plane radial trajectory is retained.
+\item The coil dimension is not combined before the STM solve.
+\item Trajectory/data correspondence is validated before operator construction.
+\end{itemize}
+\end{frame}
+\begin{frame}{Forward sensitivity-map model}
+\begin{itemize}
+\item Forward coil model: $d_c={\cal N}_{\rm radial}(S_c\odot X)$.
+\item S\_c are forward receive sensitivities in the whitened channel basis.
+\item Adjoint coil combination is $\sum_c S_c^* d_c$ after NUFFT adjoints.
+\item This is distinct from calibration-only coil-combination profiles.
+\item Map and dynamic-data channel ordering must match.
+\end{itemize}
+\end{frame}
+\begin{frame}{Radial NUFFT operator}
+\begin{itemize}
+\item buildGARSOSRadialEncodingOperator creates one NUFFT plan per frame.
+\item Forward: multiply by coil maps, then NUFFT each coil.
+\item Adjoint: NUFFT-adjoint each coil, then sum conjugated maps.
+\item Optional single precision converts trajectories, maps, data, and outputs.
+\item The operator exposes forward, adjoint, and vectorized forms.
+\end{itemize}
+\end{frame}
+\begin{frame}{STM operator composition}
+\begin{itemize}
+\item buildGARSOSSTMOperators composes STM synthesis with radial encoding.
+\item $\mathcal{A}(C)=\mathcal{F}(\mathcal{S}(C))$.
+\item $\mathcal{A}^H(y)=\mathcal{S}^H(\mathcal{F}^H(y))$.
+\item The normal operator is applied without explicitly forming a matrix.
+\item The coefficient vector has Nx x Ny x L entries.
+\end{itemize}
+\end{frame}
+\begin{frame}{PCG solve}
+\begin{itemize}
+\item Right-hand side: $b=\mathcal{A}^H y$.
+\item Unregularized system: $(\mathcal{A}^H\mathcal{A})C=b$.
+\item The baseline used tolerance 1e-5 and up to 50 iterations.
+\item Residual history, status flag, iteration count, and elapsed time are stored.
+\item Preconditioning and Toeplitz support were preliminary rather than baseline assumptions.
+\end{itemize}
+\end{frame}
+\begin{frame}{Optional Tikhonov solve}
+\begin{itemize}
+\item Regularized system: $(\mathcal{A}^H\mathcal{A}+\lambda I)C=b$.
+\item The implementation can run a second PCG solve with lambda.
+\item The effective lambda depends on data, map, NUFFT, and DCF scaling.
+\item A numerical lambda should not be compared across differently scaled operators without calibration.
+\end{itemize}
+\end{frame}
+\begin{frame}{Synthesis and outputs}
+\begin{itemize}
+\item $\widehat{X}_t=\sum_{\ell=1}^{L}{\rm ST}_{t,\ell}\widehat{C}_\ell$.
+\item sense\_recon\_stm has dimensions [Nx x Ny x nFrame].
+\item The result also contains coefficient images and PCG diagnostics.
+\item The initial reported output contained approximately 133 reconstructed frames.
+\end{itemize}
+\end{frame}
+\begin{frame}{Baseline versus later improvements}
+\begin{itemize}
+\item Baseline: direct 58-point partition IFFT for STM slice data.
+\item Later work: forward sensitivity-map estimator and map-semantics audit.
+\item Later work: coil-preserving gridded z-only path for the 96-slice geometry.
+\item Later work: scaling, conditioning, coverage, regularization, and preconditioning analysis.
+\item These improvements should be presented separately from the historical baseline.
+\end{itemize}
+\end{frame}
+\begin{frame}{End-to-end summary}
+\begin{itemize}
+\item Raw GAR-SOS data -> corrected, whitened radial samples.
+\item Trajectory + DCF + spoke IDs -> temporal frames.
+\item 3-D gridding -> calibration Cartesian k-space -> central square.
+\item STM calibration -> ST maps and eigenvalues.
+\item Coil-resolved radial data + sensitivity maps -> STM/radial operator.
+\item PCG -> spatial coefficients -> dynamic image series.
+\end{itemize}
+\end{frame}
+\end{document}
