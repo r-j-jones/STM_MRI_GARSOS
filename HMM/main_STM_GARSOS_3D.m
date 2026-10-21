@@ -1,0 +1,165 @@
+function result = main_STM_GARSOS_3D(inputPath, outputPath, opts)
+%main_STM_GARSOS_3D Prepare and reconstruct GAR-SOS STM data - 3D version.
+%
+% This is a new GAR-SOS-specific entry point based on the preparation
+% sequence in main_deid_permuted_STM. Existing production entry points and
+% STM source files are intentionally left unchanged.
+%
+% Required:
+%   inputPath, outputPath, opts.nbSpokesPerFrame
+%
+% Optional opts fields:
+%   forceUpdate, referenceVolumeA, ST_maps, eigenValues, kCal,
+%   zSlice, calibrationSize, L, STMOptions, RadialOptions
+
+    %% Add Fessler NUFFT toolbox to path
+    run /RadOnc-MRI1/Student_Folder/rjones/toolboxes/fessler/irt/setup.m
+    % addpath('/path/to/multi-scale-low-rank-MR-recon-master/nufft_toolbox');
+    fprintf('\nNUFFT is:\n %s \n\n',which('nufft'));
+    addpath('/RadOnc-MRI1/Student_Folder/rjones/toolboxes/viz');
+
+    %% Arg check
+    narginchk(3, 3);
+    if ~isstruct(opts) || ~isfield(opts, 'nbSpokesPerFrame')
+        error('main_STM_GARSOS:MissingFrameSize', ...
+            'opts.nbSpokesPerFrame is required.');
+    end
+    validateattributes(opts.nbSpokesPerFrame, {'numeric'}, ...
+        {'scalar', 'integer', 'positive'});
+    if ~isfolder(inputPath) || ~isfolder(outputPath)
+        error('main_STM_GARSOS:InvalidPath', ...
+            'inputPath and outputPath must be existing directories.');
+    end
+
+    %% Set default options
+    if ~isfield(opts, 'forceUpdate'), opts.forceUpdate = false; end
+    if ~isfield(opts, 'zSlice'), opts.zSlice = []; end
+    if ~isfield(opts, 'calibrationSize'), opts.calibrationSize = [32 32]; end
+    if ~isfield(opts, 'L'), opts.L = 7; end
+    if ~isfield(opts, 'STMOptions'), opts.STMOptions = {}; end
+    if ~isfield(opts, 'RadialOptions'), opts.RadialOptions = {}; end
+    if ~isfield(opts, 'UseGpu'), opts.UseGpu = true; end
+    if ~isfield(opts, 'DisplaySlice'), opts.DisplaySlice = false; end
+    if ~isfield(opts, 'ReturnDiagnostics'), opts.ReturnDiagnostics = true; end
+
+    %% Set custom STM options
+    if isempty(opts.STMOptions), opts.STMOptions = setCustomSTMOptions(); end
+
+    %% Set dirs
+    reconstructionDir = fullfile(inputPath, 'reconstruction');
+    inputFile = fullfile(reconstructionDir, 'input.mat');
+    if exist(inputFile, 'file') ~= 2
+        error('main_STM_GARSOS:MissingInput', ...
+            'Expected reconstruction input file: %s', inputFile);
+    end
+    loaded = load(inputFile, 'kSpaceID1', 'kSpaceID2');
+    if ~isfield(loaded, 'kSpaceID1') || ~isfield(loaded, 'kSpaceID2')
+        error('main_STM_GARSOS:MissingKSpaceIds', ...
+            'input.mat must contain kSpaceID1 and kSpaceID2.');
+    end
+
+    %% Load reference (vendor-reconed) dicom volume
+    if ~isfield(opts, 'referenceVolumeA') || isempty(opts.referenceVolumeA)
+        [referenceVolumeA, ~, ~] = loadReferenceDicomImage(inputPath, true);  
+        % save(referenceImageFile,'referenceVolumeA');
+    else
+        referenceVolumeA = opts.referenceVolumeA;
+    end
+    
+
+    %% Get scan metadata & header info
+    [kSpaceID, ~] = parseKspaceIds(loaded.kSpaceID1, loaded.kSpaceID2);
+    [metaManifest, ~] = radial_vibe_read_metadata( ...
+        kSpaceID, inputPath, outputPath, opts.forceUpdate);
+
+    frameParams = struct( ...
+        'nSpokesPerFrame', opts.nbSpokesPerFrame, ...
+        'zSlice', opts.zSlice, ...
+        'calibrationSize', opts.calibrationSize);
+    frameParams = validateFrameParams(frameParams);
+    
+    griddingParams = struct( ...
+        'UseGpu', opts.UseGpu, ...
+        'DisplaySlice', opts.DisplaySlice, ...
+        'ReturnDiagnostics', opts.ReturnDiagnostics, ...
+        'gridOversamplingFactor', 1.375);
+    griddingParams = setNormalizeGriddingParams(griddingParams, ...
+        referenceVolumeA, frameParams);
+
+    %% Load and prepare GAR-SOS data once for calibration and STM
+
+    sharedPreparedData = loadPrepareGARSOSData( ...
+        metaManifest, referenceVolumeA, griddingParams, ...
+        'SequenceIndex', 1, ...
+        'MakePlots', false);
+
+    prepared = prepareGARSOSSTMData( ...
+        metaManifest, outputPath, referenceVolumeA, opts.forceUpdate, ...
+        'SequenceIndex', 1, ...
+        'FrameParams', frameParams, ...
+        'GriddingParams', griddingParams, ...
+        'PreparedData', sharedPreparedData);
+
+    stmZSlice = 50;
+    integrationArgs = {'nbSpokesPerFrame', opts.nbSpokesPerFrame, ...
+        'zSlice', stmZSlice, ... %opts.zSlice, ...
+        'CalibrationSize', opts.calibrationSize, ...
+        'L', opts.L, 'STMOptions', opts.STMOptions, ...
+        'RadialOptions', opts.RadialOptions, ...
+        'UseSinglePrecision', true};
+    for name = {'ST_maps', 'eigenValues', 'kCal'}
+        if isfield(opts, name{1}) && ~isempty(opts.(name{1}))
+            integrationArgs(end + 1:end + 2) = {name{1}, opts.(name{1})}; 
+        end
+    end
+    
+
+    %% Run STM computation and generate GARSOS-specific operators
+    addpath('/RadOnc-MRI1/Student_Folder/rjones/STM/STM_MRI_GARSOS');
+
+    result = runGARSOSSTMIntegration(prepared, integrationArgs{:});
+    result.prepared = prepared;
+    result.inputPath = inputPath;
+    result.outputPath = outputPath;
+
+    %% Do STM Reconstruction
+    reconOptions = struct();
+    reconOptions.tolerance = 1e-5;
+    reconOptions.maxIterations = 250;
+    reconOptions.runTikhonov = true;
+    reconOptions.verbose = true;
+    reconOptions.lambdaDesired = 1e-2;
+    reconOptions.lambda = estimate_pcg_tikh_lambda( result, reconOptions.lambdaDesired, 10, true );
+    
+    stm_recon = STM_reconstruction_GARSOS(result, reconOptions);
+
+    outReconDir = fullfile(outputPath,'RadialVibe_STM_Reconstruction');
+    if ~exist(outReconDir,'dir'), mkdir(outReconDir); end
+
+    save(fullfile(outReconDir, 'test_stm-recon_250-iters_pcg+tik_z-50.mat'),'stm_recon');
+
+
+    %% Save gifs of reconed images
+    outGifDir = fullfile(outReconDir,'gifs');
+    if ~exist(outGifDir,'dir'), mkdir(outGifDir); end
+
+    frameNb = 67;
+
+    curdata=stm_recon.sense_recon_stm_tik; 
+    reconType='pcg-tikh';
+    make_stm_recon_intensity_plots( curdata, outGifDir, reconType, stmZSlice, frameNb );
+
+    curdata=stm_recon.sense_recon_stm; 
+    reconType='pcg';
+    make_stm_recon_intensity_plots( curdata, outGifDir, reconType, stmZSlice, frameNb );
+
+
+    save_SpatialCoeff_images( stm_recon, outGifDir );
+
+    save_STM_eigenValue_gifs( result, opts.nbSpokesPerFrame, outGifDir );
+
+
+
+
+
+end
